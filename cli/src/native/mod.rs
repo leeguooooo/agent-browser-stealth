@@ -35,6 +35,8 @@ pub mod snapshot;
 #[allow(dead_code)]
 pub mod state;
 #[allow(dead_code)]
+pub mod stealth;
+#[allow(dead_code)]
 pub mod storage;
 #[allow(dead_code)]
 pub mod stream;
