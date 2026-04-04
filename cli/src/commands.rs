@@ -2700,6 +2700,7 @@ mod tests {
             allow_file_access: false,
             device: None,
             auto_connect: false,
+            force_launch: false,
             session_name: None,
             cli_executable_path: false,
             cli_extensions: false,
