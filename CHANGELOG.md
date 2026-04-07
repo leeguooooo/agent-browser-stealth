@@ -1,8 +1,25 @@
 # agent-browser
 
-## 0.25.2
+## 0.25.3
 
 <!-- release:start -->
+### Bug Fixes
+
+- Fixed **hidden radio/checkbox inputs missing from snapshot refs** when a `<label>` wraps a `display:none` `<input type="radio">` or `<input type="checkbox">`. Chrome excludes these inputs from the accessibility tree entirely, making it impossible for AI agents to identify radio buttons and checkboxes via refs. Hidden inputs inside elements are now detected during cursor-interactive scanning and their parent nodes are promoted to the correct role with proper name and checked state (#1085)
+
+### Documentation
+
+- Added **clickable heading anchors** to the docs site, making it easy to link directly to any section (#1175)
+
+### Contributors
+
+- @ctate
+- @jin-2-kakaoent
+- @hyunjinee
+<!-- release:end -->
+
+## 0.25.2
+
 ### Bug Fixes
 
 - Fixed **Chrome being killed after ~10s idle on Linux** caused by `PR_SET_PDEATHSIG` tracking the blocking thread that spawned Chrome rather than the daemon process. When Tokio reaped the idle thread, the kernel sent SIGKILL to Chrome even though the daemon was still alive. Orphan cleanup is handled by the existing process-group kill in `ChromeProcess::kill()` (#1157, #1173)
@@ -10,7 +27,6 @@
 ### Contributors
 
 - @ctate
-<!-- release:end -->
 
 ## 0.25.1
 

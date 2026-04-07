@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.25.3
+
+<p className="text-[#888] text-sm">April 7, 2026</p>
+
+### Bug Fixes
+
+- Fixed **hidden radio/checkbox inputs missing from snapshot refs** when a `<label>` wraps a `display:none` `<input type="radio">` or `<input type="checkbox">`. Chrome excludes these inputs from the accessibility tree entirely, making it impossible for AI agents to identify radio buttons and checkboxes via refs. Hidden inputs inside elements are now detected during cursor-interactive scanning and their parent nodes are promoted to the correct role with proper name and checked state (#1085)
+
+### Documentation
+
+- Added **clickable heading anchors** to the docs site, making it easy to link directly to any section (#1175)
+
+---
+
 ## v0.25.2
 
 <p className="text-[#888] text-sm">April 6, 2026</p>
