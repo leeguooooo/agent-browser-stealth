@@ -884,6 +884,38 @@ pub async fn tap_touch(
     Ok(())
 }
 
+/// After a click is dispatched, give the page two animation frames + a
+/// microtask boundary to let React/Vue/Svelte commit any state update
+/// scheduled by the click handler. Without this wait, follow-up commands
+/// (e.g. `inserttext` against the textbox the click was supposed to mount)
+/// race the renderer and can land on stale or wrong elements.
+///
+/// The wait is bounded to ~33ms in the common case (two RAFs at 60fps) and
+/// returns immediately on any error — never an exception path.
+///
+/// Set `AGENT_BROWSER_CLICK_WAIT_STABLE=0` to disable for perf-sensitive
+/// scripts that don't drive SPA UIs.
+async fn wait_for_paint_settled(client: &CdpClient, session_id: &str) {
+    if std::env::var("AGENT_BROWSER_CLICK_WAIT_STABLE").as_deref() == Ok("0") {
+        return;
+    }
+    let script = "new Promise(resolve => \
+        requestAnimationFrame(() => \
+            requestAnimationFrame(() => \
+                queueMicrotask(() => resolve(true)))))";
+    let _ = client
+        .send_command_typed::<_, Value>(
+            "Runtime.evaluate",
+            &EvaluateParams {
+                expression: script.to_string(),
+                return_by_value: Some(true),
+                await_promise: Some(true),
+            },
+            Some(session_id),
+        )
+        .await;
+}
+
 async fn dispatch_click(
     client: &CdpClient,
     session_id: &str,
@@ -955,6 +987,7 @@ async fn dispatch_click(
         )
         .await?;
 
+    wait_for_paint_settled(client, session_id).await;
     Ok(())
 }
 
