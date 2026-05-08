@@ -163,6 +163,30 @@ pub async fn resolve_element_center(
 
         // Try cached backend_node_id first (fast path)
         if let Some(backend_node_id) = entry.backend_node_id {
+            // Identity check: React often re-uses the same DOM node when
+            // re-rendering — backendNodeId stays the same but accessibleName
+            // / role changes. Without this verification, `click @e20` (saved
+            // when the button said "Add post") happily clicks the *same*
+            // node that now says "Post all", silently submitting the thread.
+            //
+            // Set AGENT_BROWSER_VERIFY_REF=0 to skip (saves one CDP
+            // roundtrip per ref-based interaction; only safe if you know
+            // the page is static between snapshot and click).
+            if std::env::var("AGENT_BROWSER_VERIFY_REF").as_deref() != Ok("0") {
+                if let Err(e) = verify_ref_identity(
+                    client,
+                    effective_session_id,
+                    backend_node_id,
+                    &ref_id,
+                    &entry.role,
+                    &entry.name,
+                )
+                .await
+                {
+                    return Err(e);
+                }
+            }
+
             let result: Result<DomGetBoxModelResult, String> = client
                 .send_command_typed(
                     "DOM.getBoxModel",
@@ -230,6 +254,24 @@ pub async fn resolve_element_object_id(
 
         // Try cached backend_node_id first (fast path)
         if let Some(backend_node_id) = entry.backend_node_id {
+            // Same identity guard as resolve_element_center — see that
+            // function for why React DOM-node-reuse breaks ref-based
+            // interactions if we skip this.
+            if std::env::var("AGENT_BROWSER_VERIFY_REF").as_deref() != Ok("0") {
+                if let Err(e) = verify_ref_identity(
+                    client,
+                    effective_session_id,
+                    backend_node_id,
+                    &ref_id,
+                    &entry.role,
+                    &entry.name,
+                )
+                .await
+                {
+                    return Err(e);
+                }
+            }
+
             let result: Result<DomResolveNodeResult, String> = client
                 .send_command_typed(
                     "DOM.resolveNode",
@@ -331,6 +373,57 @@ fn resolve_frame_session<'a>(
         .and_then(|fid| iframe_sessions.get(fid))
         .map(|s| s.as_str())
         .unwrap_or(session_id)
+}
+
+/// Verify that the cached backendNodeId still has the same accessible role
+/// and name it had when the snapshot ran. Catches the case where React (or
+/// any reconciler) reused the DOM node for a different component instance
+/// — same physical node, different semantics.
+///
+/// On mismatch, returns an actionable error naming both the snapshot label
+/// and the current label so the agent can re-snapshot intelligently.
+/// On any CDP failure (e.g. node deleted), returns Ok(()) so the caller's
+/// existing fallback (`find_node_id_by_role_name`) takes over.
+async fn verify_ref_identity(
+    client: &CdpClient,
+    session_id: &str,
+    backend_node_id: i64,
+    ref_id: &str,
+    expected_role: &str,
+    expected_name: &str,
+) -> Result<(), String> {
+    let params = serde_json::json!({
+        "backendNodeId": backend_node_id,
+        "fetchRelatives": false,
+    });
+    let resp: Result<GetFullAXTreeResult, String> = client
+        .send_command_typed("Accessibility.getPartialAXTree", &params, Some(session_id))
+        .await;
+    let Ok(tree) = resp else {
+        // Node likely gone; let the box-model call fail and trigger fallback.
+        return Ok(());
+    };
+    // Find the AXNode for our backendNodeId. fetchRelatives=false still
+    // returns ancestors; the target node has the matching backendNodeId.
+    let Some(node) = tree
+        .nodes
+        .iter()
+        .find(|n| n.backend_d_o_m_node_id == Some(backend_node_id))
+    else {
+        return Ok(());
+    };
+    let actual_role = extract_ax_string(&node.role);
+    let actual_name = extract_ax_string(&node.name);
+    if actual_role == expected_role && actual_name == expected_name {
+        return Ok(());
+    }
+    Err(format!(
+        "Ref {} no longer matches its snapshot. Was [{} \"{}\"], now [{} \"{}\"].\n\
+         The DOM mutated between snapshot and interaction (typical with React/Vue \
+         reusing nodes during re-render). Take a fresh snapshot, then re-target.\n\
+         To bypass this guard set AGENT_BROWSER_VERIFY_REF=0.",
+        ref_id, expected_role, expected_name, actual_role, actual_name,
+    ))
 }
 
 /// Re-query the accessibility tree to find a node matching role+name+nth,
