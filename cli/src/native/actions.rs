@@ -1510,6 +1510,28 @@ async fn connect_auto_with_fresh_tab() -> Result<BrowserManager, String> {
         .client
         .send_command("Page.bringToFront", None, Some(&session_id))
         .await;
+
+    // Liveness probe: confirm the CDP session can actually round-trip
+    // before returning success. Without this, a zombie CDP socket (process
+    // alive, websocket dead) would let `connect_auto` and `tab_new` succeed,
+    // we'd return Ok, the next user command would silently no-op, and
+    // `agent-browser open URL` would exit 0 with the browser still on
+    // about:blank. Failing here lets the caller surface the real error.
+    if let Err(e) = mgr
+        .client
+        .send_command("Runtime.evaluate", Some(serde_json::json!({
+            "expression": "1",
+            "returnByValue": true,
+        })), Some(&session_id))
+        .await
+    {
+        return Err(format!(
+            "CDP session is unresponsive after attaching ({}). \
+             The browser may have lost its DevTools connection. \
+             Try: agent-browser close, then re-run.",
+            e
+        ));
+    }
     Ok(mgr)
 }
 
@@ -3105,6 +3127,15 @@ async fn handle_wait(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
             .get("state")
             .and_then(|v| v.as_str())
             .unwrap_or("visible");
+        // @-ref support: if the selector is `@e12` style, poll the ref map +
+        // accessibility tree instead of `document.querySelector`. This makes
+        // `wait @e8 --gone` a usable "assert modal still mounted" primitive
+        // for SPA flows where the only stable identity is the AX role+name
+        // captured at snapshot time.
+        if selector.starts_with('@') {
+            wait_for_ref(state, selector, state_str, timeout_ms).await?;
+            return Ok(json!({ "waited": "ref", "ref": selector, "state": state_str }));
+        }
         wait_for_selector(&mgr.client, &session_id, selector, state_str, timeout_ms).await?;
         return Ok(json!({ "waited": "selector", "selector": selector }));
     }
@@ -3315,6 +3346,49 @@ async fn handle_reload(state: &mut DaemonState) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 // Wait helpers
 // ---------------------------------------------------------------------------
+
+/// Poll-based wait for a ref-identified element. Resolves the @-ref by
+/// re-running the ref-identity verification each iteration. The supported
+/// states mirror selector-based waits:
+///
+///   - "visible" / "attached" — succeed when the ref resolves to a node
+///     whose AX role + name still match the snapshot entry
+///   - "detached" / "hidden" — succeed when the ref no longer matches
+///     (node removed OR re-textified to something else)
+///
+/// Times out with a "ref X did not become {state}" error.
+async fn wait_for_ref(
+    state: &mut DaemonState,
+    ref_selector: &str,
+    desired_state: &str,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    let want_present = !matches!(desired_state, "detached" | "hidden");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    loop {
+        let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+        let session_id = mgr.active_session_id()?.to_string();
+        let resolved = super::element::resolve_element_object_id(
+            &mgr.client,
+            &session_id,
+            &state.ref_map,
+            ref_selector,
+            &state.iframe_sessions,
+        )
+        .await;
+        let present = resolved.is_ok();
+        if present == want_present {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Timeout: ref {} did not become {} within {}ms",
+                ref_selector, desired_state, timeout_ms
+            ));
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+}
 
 async fn wait_for_selector(
     client: &super::cdp::client::CdpClient,
