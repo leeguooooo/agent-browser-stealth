@@ -24,6 +24,16 @@ For basic usage, commands, and API reference, see the [upstream documentation](h
 npm install -g agent-browser-stealth
 ```
 
+### Install the AI agent skills
+
+The repo ships SKILL.md files for Claude Code, Cursor, etc. Pull them into the current project with [skills.sh](https://skills.sh):
+
+```bash
+npx skills add leeguooooo/agent-browser-stealth
+```
+
+This drops `skills/agent-browser` (and the specialized `skill-data/{core,electron,slack,dogfood,agentcore,vercel-sandbox}`) into your project so your AI agent gets the right usage patterns and pre-approved bash permissions for `agent-browser`, `agent-browser-stealth`, and `abs`.
+
 ## Setup (one time)
 
 Enable Chrome DevTools Protocol in your Chrome:
@@ -75,7 +85,7 @@ When using `--launch` mode (standalone browser), a full suite of 32 stealth patc
 
 ## Differences from upstream
 
-Based on [agent-browser v0.24.0](https://github.com/vercel-labs/agent-browser). Changes:
+Based on [agent-browser v0.27.0](https://github.com/vercel-labs/agent-browser). Changes:
 
 - **Auto-connect is default** — `agent-browser open <url>` connects to your Chrome instead of launching a new one
 - **CDP-native stealth** — `Emulation.setAutomationOverride` instead of JS patches
