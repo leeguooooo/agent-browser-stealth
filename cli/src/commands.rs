@@ -2180,7 +2180,33 @@ fn parse_find(rest: &[&str], id: &str) -> Result<Value, ParseError> {
                     _ => "find <locator> <value> [action] [text]",
                 },
             })?;
-            let subaction = rest.get(2).unwrap_or(&"click");
+            let raw_subaction = rest.get(2).copied();
+            if let Some(s) = raw_subaction {
+                if s.starts_with("--") {
+                    return Err(ParseError::InvalidValue {
+                        message: format!(
+                            "Missing action verb for `find {locator}` (got `{flag}` where action was expected).\n\
+                             Valid actions: click, fill, check, hover, text\n\
+                             Did you mean: agent-browser find {locator} <value> click {flag} ...?",
+                            locator = locator,
+                            flag = s,
+                        ),
+                        usage: match *locator {
+                            "role" => "find role <role> <action> [--name <name>] [--exact]",
+                            "text" => "find text <text> <action> [--exact]",
+                            "label" => "find label <label> <action> [text] [--exact]",
+                            "placeholder" => "find placeholder <text> <action> [text] [--exact]",
+                            "alt" => "find alt <text> <action> [--exact]",
+                            "title" => "find title <text> <action> [--exact]",
+                            "testid" => "find testid <id> <action> [text]",
+                            "first" => "find first <selector> <action> [text]",
+                            "last" => "find last <selector> <action> [text]",
+                            _ => "find <locator> <value> <action> [text]",
+                        },
+                    });
+                }
+            }
+            let subaction = raw_subaction.unwrap_or("click");
             let mut name: Option<&str> = None;
             let mut exact = false;
             let mut fill_parts: Vec<&str> = Vec::new();
@@ -5104,5 +5130,59 @@ mod tests {
     fn test_batch_no_args_no_commands_field() {
         let cmd = parse_command(&args("batch"), &default_flags()).unwrap();
         assert!(cmd.get("commands").is_none());
+    }
+
+    // === parse_find: friendly error when action verb is missing ===
+
+    #[test]
+    fn test_find_role_missing_action_verb_with_name_flag() {
+        let err = parse_command(
+            &args("find role button --name Submit"),
+            &default_flags(),
+        )
+        .unwrap_err();
+        let msg = err.format();
+        assert!(
+            msg.contains("Missing action verb"),
+            "expected 'Missing action verb' in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("Did you mean"),
+            "expected 'Did you mean' suggestion, got: {msg}"
+        );
+        assert!(
+            msg.contains("--name"),
+            "error should echo the offending flag back, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_find_testid_missing_action_verb_with_exact_flag() {
+        let err = parse_command(
+            &args("find testid foo --exact"),
+            &default_flags(),
+        )
+        .unwrap_err();
+        assert!(err.format().contains("Missing action verb"));
+    }
+
+    #[test]
+    fn test_find_role_with_action_still_works() {
+        let cmd = parse_command(
+            &args("find role button click --name Submit"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["action"], "getbyrole");
+        assert_eq!(cmd["subaction"], "click");
+        assert_eq!(cmd["name"], "Submit");
+    }
+
+    #[test]
+    fn test_find_role_default_subaction_click_when_no_action() {
+        // Backwards compat: `find role button` (no flags, no action) keeps
+        // defaulting to click — only `--xxx` in action position errors.
+        let cmd = parse_command(&args("find role button"), &default_flags()).unwrap();
+        assert_eq!(cmd["subaction"], "click");
     }
 }
