@@ -614,17 +614,44 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                 return Ok(cmd);
             }
 
+            // --gone / --hidden: wait for an element to leave the DOM or
+            // become invisible. Useful after a click that's supposed to
+            // close a dialog, so the next command fails fast instead of
+            // racing into a half-rendered UI.
+            let state_override = if rest.iter().any(|&s| s == "--gone" || s == "--detached") {
+                Some("detached")
+            } else if rest.iter().any(|&s| s == "--hidden") {
+                Some("hidden")
+            } else {
+                None
+            };
+
             // Default: selector or timeout
-            if let Some(arg) = rest.first() {
+            // First non-flag positional is selector or numeric timeout
+            let positional = rest.iter().find(|&&s| !s.starts_with("--"));
+            let timeout_ms = rest
+                .iter()
+                .position(|&s| s == "--timeout")
+                .and_then(|idx| rest.get(idx + 1))
+                .and_then(|s| s.parse::<u64>().ok());
+
+            if let Some(arg) = positional {
                 if let Ok(timeout) = arg.parse::<u64>() {
                     Ok(json!({ "id": id, "action": "wait", "timeout": timeout }))
                 } else {
-                    Ok(json!({ "id": id, "action": "wait", "selector": arg }))
+                    let mut cmd = json!({ "id": id, "action": "wait", "selector": arg });
+                    if let Some(state) = state_override {
+                        cmd["state"] = json!(state);
+                    }
+                    if let Some(t) = timeout_ms {
+                        cmd["timeout"] = json!(t);
+                    }
+                    Ok(cmd)
                 }
             } else {
                 Err(ParseError::MissingArguments {
                     context: "wait".to_string(),
-                    usage: "wait <selector|ms|--url|--load|--fn|--text>",
+                    usage: "wait <selector|ms> [--gone|--hidden] [--timeout ms]",
                 })
             }
         }
@@ -5184,5 +5211,48 @@ mod tests {
         // defaulting to click — only `--xxx` in action position errors.
         let cmd = parse_command(&args("find role button"), &default_flags()).unwrap();
         assert_eq!(cmd["subaction"], "click");
+    }
+
+    // === wait --gone / --hidden ===
+
+    #[test]
+    fn test_wait_selector_default_visible() {
+        let cmd = parse_command(&args("wait .toast"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "wait");
+        assert_eq!(cmd["selector"], ".toast");
+        assert!(cmd.get("state").is_none(), "default state stays implicit");
+    }
+
+    #[test]
+    fn test_wait_selector_gone_sets_detached_state() {
+        let cmd = parse_command(&args("wait .toast --gone"), &default_flags()).unwrap();
+        assert_eq!(cmd["selector"], ".toast");
+        assert_eq!(cmd["state"], "detached");
+    }
+
+    #[test]
+    fn test_wait_selector_hidden_sets_hidden_state() {
+        let cmd = parse_command(&args("wait .toast --hidden"), &default_flags()).unwrap();
+        assert_eq!(cmd["state"], "hidden");
+    }
+
+    #[test]
+    fn test_wait_gone_with_timeout() {
+        let cmd = parse_command(
+            &args("wait .modal --gone --timeout 2000"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["selector"], ".modal");
+        assert_eq!(cmd["state"], "detached");
+        assert_eq!(cmd["timeout"], 2000);
+    }
+
+    #[test]
+    fn test_wait_numeric_timeout_still_works() {
+        // `wait 500` keeps meaning "sleep 500ms", not "wait for selector 500"
+        let cmd = parse_command(&args("wait 500"), &default_flags()).unwrap();
+        assert_eq!(cmd["timeout"], 500);
+        assert!(cmd.get("selector").is_none());
     }
 }
