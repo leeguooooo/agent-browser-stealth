@@ -127,6 +127,15 @@ fn get_version_path(session: &str) -> PathBuf {
     get_socket_dir().join(format!("{}.version", session))
 }
 
+/// Path to the sidecar file that records the URL the previous daemon was on,
+/// used to restore navigation after a version-mismatch restart. Only written
+/// when the version-mismatch branch fires; cleared after the new daemon
+/// reads it. Manual `close` does not write this file, so a clean shutdown
+/// won't trigger surprise navigation.
+pub fn get_restore_url_path(session: &str) -> PathBuf {
+    get_socket_dir().join(format!("{}.restore-url", session))
+}
+
 /// Clean up stale socket and PID files for a session
 pub fn cleanup_stale_files(session: &str) {
     let pid_path = get_pid_path(session);
@@ -135,6 +144,10 @@ pub fn cleanup_stale_files(session: &str) {
     let _ = fs::remove_file(&version_path);
     let stream_path = get_socket_dir().join(format!("{}.stream", session));
     let _ = fs::remove_file(&stream_path);
+    // Note: the .restore-url sidecar is intentionally NOT removed here —
+    // it lives across the brief window between killing the old daemon
+    // and the new daemon reading it back. The new daemon deletes it after
+    // restoring (see actions::auto_launch).
 
     #[cfg(unix)]
     {
@@ -527,6 +540,24 @@ fn daemon_version_matches(session: &str) -> bool {
     }
 }
 
+/// One-shot socket query for the running daemon's current URL.
+/// Returns None on any kind of failure — caller must treat as best-effort.
+fn query_current_url(session: &str) -> Option<String> {
+    let cmd = serde_json::json!({
+        "id": format!("restore-url-probe-{}", std::process::id()),
+        "action": "url",
+    });
+    let resp = send_command_once(&cmd, session).ok()?;
+    if !resp.success {
+        return None;
+    }
+    resp.data
+        .as_ref()
+        .and_then(|d| d.get("url"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Kill a running daemon by reading its PID file and sending a kill signal.
 fn kill_stale_daemon(session: &str) {
     // Remove the socket first so no new connections reach the old daemon
@@ -592,6 +623,16 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
                     "{} Daemon version mismatch detected, restarting...",
                     crate::color::warning_indicator()
                 );
+                // Best-effort: ask the old daemon for its current URL so the
+                // new daemon can restore navigation after auto-connect. If the
+                // query fails (already shutting down, no browser, etc.) we
+                // silently skip — the user just sees about:blank as before.
+                if let Some(url) = query_current_url(session) {
+                    if !url.is_empty() && url != "about:blank" {
+                        let path = get_restore_url_path(session);
+                        let _ = fs::write(&path, &url);
+                    }
+                }
                 kill_stale_daemon(session);
                 // Fall through to spawn a new daemon below
             } else {

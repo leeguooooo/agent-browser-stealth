@@ -9,7 +9,7 @@ use std::sync::Arc;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tokio::sync::{broadcast, oneshot, RwLock};
 
-use crate::connection::get_socket_dir;
+use crate::connection::{get_restore_url_path, get_socket_dir};
 
 use super::auth;
 use super::browser::{should_track_target, BrowserManager, WaitUntil};
@@ -1552,6 +1552,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
         try_auto_restore_state(state).await;
         try_load_storage_state(state, &storage_state_path).await;
         apply_stealth_to_browser(state).await;
+        try_restore_navigation(state).await;
         return Ok(());
     }
 
@@ -1573,6 +1574,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
                 try_auto_restore_state(state).await;
                 try_load_storage_state(state, &storage_state_path).await;
                 apply_stealth_to_browser(state).await;
+                try_restore_navigation(state).await;
                 return Ok(());
             }
             Err(_e) => {
@@ -1660,6 +1662,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
     try_load_storage_state(state, &storage_state_path).await;
     // Apply stealth anti-detection patches after browser is ready
     apply_stealth_to_browser(state).await;
+    try_restore_navigation(state).await;
     Ok(())
 }
 
@@ -1767,6 +1770,47 @@ async fn apply_stealth_to_browser(state: &DaemonState) {
         stealth::apply_stealth_to_current_page(&mgr.client, session_id, mode, locale.as_deref()).await
     {
         eprintln!("[stealth] Failed to patch current page: {}", e);
+    }
+}
+
+/// If the previous daemon left a `.restore-url` sidecar (because it was killed
+/// by a version-mismatch restart), navigate the freshly-connected browser to
+/// that URL so `agent-browser get url` after `npm i -g` upgrade still reports
+/// the page the user was on. Read-and-delete: the file is removed regardless
+/// of whether navigation succeeds, so a stale sidecar can't haunt later
+/// auto-launches.
+async fn try_restore_navigation(state: &mut DaemonState) {
+    let path = get_restore_url_path(&state.session_id);
+    let url = match fs::read_to_string(&path) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => return,
+    };
+    let _ = fs::remove_file(&path);
+    if url.is_empty() {
+        return;
+    }
+    let Some(mgr) = state.browser.as_mut() else {
+        return;
+    };
+    state.ref_map.clear();
+    state.iframe_sessions.clear();
+    state.active_frame_id = None;
+    match mgr.navigate(&url, super::browser::WaitUntil::Load).await {
+        Ok(_) => {
+            eprintln!(
+                "{} Restored previous URL: {}",
+                crate::color::warning_indicator(),
+                url
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{} Could not restore previous URL ({}): {}",
+                crate::color::warning_indicator(),
+                url,
+                e
+            );
+        }
     }
 }
 
