@@ -11,9 +11,9 @@
     "extensions"
   ],
   "bin": {
-    "agent-browser-stealth": "./bin/agent-browser.js",
-    "agent-browser": "./bin/agent-browser.js",
-    "abs": "./bin/agent-browser.js"
+    "agent-browser-stealth": "bin/agent-browser.js",
+    "agent-browser": "bin/agent-browser.js",
+    "abs": "bin/agent-browser.js"
   },
   "scripts": {
     "prepare": "husky",
