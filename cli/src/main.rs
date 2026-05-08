@@ -822,11 +822,24 @@ fn main() {
         .collect();
 
         if !ignored_flags.is_empty() && !flags.json {
-            eprintln!(
-                "{} {} ignored: daemon already running. Use 'agent-browser close' first to restart with new options.",
-                color::warning_indicator(),
-                ignored_flags.join(", ")
-            );
+            // Special case: --headed is irrelevant in CDP-attach mode
+            // (your existing Chrome is always already visible). The
+            // "agent-browser close + reopen" advice doesn't help because
+            // the new daemon will attach right back to the same Chrome.
+            // Don't suggest a useless workaround.
+            if ignored_flags == ["--headed"] {
+                eprintln!(
+                    "{} --headed has no effect when attached to your running Chrome (it's already visible). \
+                     Pass --launch to spawn a separate browser if you need to control headedness.",
+                    color::warning_indicator(),
+                );
+            } else {
+                eprintln!(
+                    "{} {} ignored: daemon already running. Use 'agent-browser close' first to restart with new options.",
+                    color::warning_indicator(),
+                    ignored_flags.join(", ")
+                );
+            }
         }
     }
 
