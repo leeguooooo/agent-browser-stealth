@@ -485,9 +485,8 @@ async fn verify_click_target(
 ) -> Result<(), String> {
     use serde::Deserialize;
 
-    // Tight 500ms timeout — this is a defensive guard, not critical path.
-    // If it can't run quickly, fall through and let the click proceed
-    // (we're no worse off than the unguarded code path).
+    // Resolve once. backendNodeId is stable across renders; only the
+    // element under (x, y) is what changes when an overlay flickers.
     let resolve_params = DomResolveNodeParams {
         backend_node_id: Some(backend_node_id),
         node_id: None,
@@ -512,6 +511,35 @@ async fn verify_click_target(
         return Ok(());
     };
 
+    // Auto-retry on transient occlusion. Many real-world overlays
+    // (modal backdrops, focus rings, click-outside masks) blink in for
+    // a frame or two during state transitions and clear on their own.
+    // Without retries the user gets an "occluded" error and has to
+    // wrap every click in their own retry loop. With retries the
+    // common case is invisible — only persistent overlays surface.
+    //
+    // AGENT_BROWSER_OCCLUSION_RETRIES         (default 3, 0 disables)
+    // AGENT_BROWSER_OCCLUSION_RETRY_DELAY_MS  (default 200)
+    let max_retries: u32 = std::env::var("AGENT_BROWSER_OCCLUSION_RETRIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let retry_delay_ms: u64 = std::env::var("AGENT_BROWSER_OCCLUSION_RETRY_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200);
+
+    #[derive(Deserialize)]
+    struct Occluder {
+        tag: Option<String>,
+        testid: Option<String>,
+        role: Option<String>,
+        #[serde(rename = "ariaLabel")]
+        aria_label: Option<String>,
+        text: Option<String>,
+        reason: Option<String>,
+    }
+
     // function(x, y) { ... } where `this` is the target element.
     // Return null  → click is safe.
     // Return JSON  → describes the occluding element.
@@ -527,51 +555,46 @@ async fn verify_click_target(
             text: ((at.textContent||'').trim().slice(0, 60)) \
         }); \
     }";
-    let call_params = serde_json::json!({
-        "objectId": object_id,
-        "functionDeclaration": function_decl,
-        "arguments": [{"value": x}, {"value": y}],
-        "returnByValue": true,
-    });
-    let call_fut = client.send_command_typed::<_, serde_json::Value>(
-        "Runtime.callFunctionOn",
-        &call_params,
-        Some(session_id),
-    );
-    let Ok(call_resp) =
-        tokio::time::timeout(std::time::Duration::from_millis(500), call_fut).await
-    else {
-        return Ok(());
-    };
-    let Ok(call_result) = call_resp else {
-        return Ok(());
-    };
 
-    let value = call_result
-        .get("result")
-        .and_then(|r| r.get("value"));
-
-    // null / undefined / missing → safe
-    let json_str = match value {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        _ => return Ok(()),
-    };
-
-    #[derive(Deserialize)]
-    struct Occluder {
-        tag: Option<String>,
-        testid: Option<String>,
-        role: Option<String>,
-        #[serde(rename = "ariaLabel")]
-        aria_label: Option<String>,
-        text: Option<String>,
-        reason: Option<String>,
+    let mut last_occ: Option<Occluder> = None;
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(retry_delay_ms)).await;
+        }
+        let call_params = serde_json::json!({
+            "objectId": object_id,
+            "functionDeclaration": function_decl,
+            "arguments": [{"value": x}, {"value": y}],
+            "returnByValue": true,
+        });
+        let call_fut = client.send_command_typed::<_, serde_json::Value>(
+            "Runtime.callFunctionOn",
+            &call_params,
+            Some(session_id),
+        );
+        let Ok(call_resp) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), call_fut).await
+        else {
+            return Ok(()); // probe itself stalled — fall through to click
+        };
+        let Ok(call_result) = call_resp else {
+            return Ok(());
+        };
+        let value = call_result.get("result").and_then(|r| r.get("value"));
+        let json_str = match value {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            // null / undefined → element at point IS our target. Safe.
+            _ => return Ok(()),
+        };
+        let occ: Occluder = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
+        last_occ = Some(occ);
     }
-    let occ: Occluder = match serde_json::from_str(&json_str) {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
 
+    // All retries exhausted — overlay is sticky. Build the descriptive error.
+    let occ = last_occ.expect("loop ran at least once");
     if let Some(reason) = occ.reason {
         return Err(format!(
             "Ref {} cannot be clicked at its computed position: {}. \
@@ -579,7 +602,6 @@ async fn verify_click_target(
             ref_id, reason
         ));
     }
-
     let mut desc = occ.tag.unwrap_or_else(|| "unknown".to_string());
     if let Some(t) = occ.testid {
         desc.push_str(&format!("[testid={}]", t));
@@ -595,13 +617,13 @@ async fn verify_click_target(
             desc.push_str(&format!(" text=\"{}\"", t));
         }
     }
+    let waited_ms = (max_retries as u64) * retry_delay_ms;
     Err(format!(
-        "Ref {} is occluded by {} at the click point. \
-         A transient overlay (modal backdrop, mask, sticky banner, etc.) \
-         appeared between snapshot and click. \
-         Wait for it to clear or re-snapshot, then retry. \
-         Set AGENT_BROWSER_VERIFY_CLICK_TARGET=0 to bypass this guard.",
-        ref_id, desc
+        "Ref {} is occluded by {} at the click point (still occluded after \
+         {} retries / {}ms). A persistent overlay is in the way — \
+         re-run snapshot, dismiss the overlay, or set \
+         AGENT_BROWSER_VERIFY_CLICK_TARGET=0 to bypass.",
+        ref_id, desc, max_retries, waited_ms,
     ))
 }
 
