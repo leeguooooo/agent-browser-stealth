@@ -20,10 +20,10 @@ services:
         
         # Build both targets in parallel
         (echo "→ Linux x64" && cargo zigbuild --release --target x86_64-unknown-linux-gnu && cp /build/target/x86_64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-x64 && chmod +x /output/agent-browser-linux-x64 && echo "✓ Linux x64 done") &
-        PID1=$!
+        PID1=$$!
         
         (echo "→ Linux ARM64" && cargo zigbuild --release --target aarch64-unknown-linux-gnu && cp /build/target/aarch64-unknown-linux-gnu/release/agent-browser /output/agent-browser-linux-arm64 && chmod +x /output/agent-browser-linux-arm64 && echo "✓ Linux ARM64 done") &
-        PID2=$!
+        PID2=$$!
         
         # Wait for both and check exit codes individually — without this
         # the outer script exits 0 even if one of the parallel builds
@@ -31,8 +31,8 @@ services:
         # previous release. Caused 0.27.0-fork.5 to ship with a stale
         # linux-x64 binary at the first publish attempt until caught
         # manually by checking the embedded version string.
-        wait $PID1 || { echo "✗ Linux x64 build failed"; exit 1; }
-        wait $PID2 || { echo "✗ Linux ARM64 build failed"; exit 1; }
+        wait $$PID1 || { echo "✗ Linux x64 build failed"; exit 1; }
+        wait $$PID2 || { echo "✗ Linux ARM64 build failed"; exit 1; }
         
         echo ""
         echo "✓ Linux platforms built successfully!"
@@ -71,16 +71,21 @@ services:
     environment:
       - TARGET=${TARGET:-x86_64-unknown-linux-gnu}
       - OUTPUT_NAME=${OUTPUT_NAME:-agent-browser-linux-x64}
+    # NOTE: $$ escapes a literal $ for the in-container shell. A single $ is
+    # interpolated by docker compose at YAML parse time against the *host*
+    # environment, which silently drops script-local variables like SRC
+    # (caused 0.27.0-fork.7 to ship with a stale linux-arm64 binary because
+    # the cp command resolved to `cp "" "/output/"` after compose ate $SRC
+    # and $OUTPUT_NAME). $TARGET / $OUTPUT_NAME are set via `environment:`
+    # below — those are also passed into the container, so $$TARGET and
+    # $$OUTPUT_NAME read them at script time.
     command: |
       -c '
         set -e
-        cargo zigbuild --release --target $TARGET
-        # Copy the binary explicitly. The previous `agent-browser*` glob
-        # matched the binary AND its `.d` dependency file, which made cp
-        # treat the destination as a directory and silently failed.
-        SRC="/build/target/$TARGET/release/agent-browser"
-        if [ -f "$SRC.exe" ]; then SRC="$SRC.exe"; fi
-        cp "$SRC" "/output/$OUTPUT_NAME"
-        chmod +x /output/$OUTPUT_NAME 2>/dev/null || true
-        echo "✓ Built $OUTPUT_NAME"
+        cargo zigbuild --release --target $$TARGET
+        SRC="/build/target/$$TARGET/release/agent-browser"
+        if [ -f "$$SRC.exe" ]; then SRC="$$SRC.exe"; fi
+        cp "$$SRC" "/output/$$OUTPUT_NAME"
+        chmod +x /output/$$OUTPUT_NAME 2>/dev/null || true
+        echo "✓ Built $$OUTPUT_NAME"
       '
