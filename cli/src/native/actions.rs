@@ -1607,8 +1607,9 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
                      To let agent-browser work with your existing Chrome (recommended):\n\
                      {}\n\n\
                      Or start a standalone browser with: agent-browser --launch open <url>\n\n\
-                     Tip: On Chrome 144+, you can enable CDP without restarting:\n\
-                     Open chrome://inspect/#remote-debugging and toggle it on.",
+                     Note: chrome://inspect/#remote-debugging only enables remote *target discovery* — \
+                     it does NOT expose the standard CDP HTTP API on /json/version. \
+                     A full restart with --remote-debugging-port=<port> is required.",
                     chrome_relaunch_hint(),
                 ));
             }
@@ -2135,8 +2136,9 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
                      To let agent-browser work with your existing Chrome (recommended):\n\
                      {}\n\n\
                      Or start a standalone browser with: agent-browser --launch open <url>\n\n\
-                     Tip: On Chrome 144+, you can enable CDP without restarting:\n\
-                     Open chrome://inspect/#remote-debugging and toggle it on.",
+                     Note: chrome://inspect/#remote-debugging only enables remote *target discovery* — \
+                     it does NOT expose the standard CDP HTTP API on /json/version. \
+                     A full restart with --remote-debugging-port=<port> is required.",
                     chrome_relaunch_hint(),
                 ));
             }

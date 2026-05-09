@@ -396,9 +396,23 @@ async fn verify_ref_identity(
         "backendNodeId": backend_node_id,
         "fetchRelatives": false,
     });
-    let resp: Result<GetFullAXTreeResult, String> = client
-        .send_command_typed("Accessibility.getPartialAXTree", &params, Some(session_id))
-        .await;
+    // Tight 1s timeout: this is a defensive guard, not a critical path.
+    // The default 30s CDP timeout was the dominant factor in the
+    // "click hangs 5+ minutes" report — three CDP calls (verify +
+    // resolveNode + paint-settle) at 30s each, multiplied by parallel
+    // click invocations queueing on the daemon, totalled multi-minute
+    // user-visible hangs. Cap our own helper so a stuck AX query
+    // doesn't make `click` worse than the no-guard version was.
+    let resp: Result<GetFullAXTreeResult, String> = match tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        client.send_command_typed("Accessibility.getPartialAXTree", &params, Some(session_id)),
+    )
+    .await
+    {
+        Ok(r) => r,
+        // Timeout: skip identity verification rather than block the click.
+        Err(_) => return Ok(()),
+    };
     let Ok(tree) = resp else {
         // Node likely gone; let the box-model call fail and trigger fallback.
         return Ok(());

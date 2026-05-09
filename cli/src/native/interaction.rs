@@ -903,8 +903,15 @@ async fn wait_for_paint_settled(client: &CdpClient, session_id: &str) {
         requestAnimationFrame(() => \
             requestAnimationFrame(() => \
                 queueMicrotask(() => resolve(true)))))";
-    let _ = client
-        .send_command_typed::<_, Value>(
+    // Tight 500ms timeout. RAF normally fires at 16ms, two RAFs total ~33ms.
+    // If the tab is hidden / throttled / page is doing something pathological
+    // and RAF doesn't fire in 500ms, we'd rather return now than stall the
+    // user's click. Without this cap, a stuck RAF inherited the default 30s
+    // CDP timeout and was the main contributor to the "click hangs 5+ min"
+    // user report.
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        client.send_command_typed::<_, Value>(
             "Runtime.evaluate",
             &EvaluateParams {
                 expression: script.to_string(),
@@ -912,8 +919,9 @@ async fn wait_for_paint_settled(client: &CdpClient, session_id: &str) {
                 await_promise: Some(true),
             },
             Some(session_id),
-        )
-        .await;
+        ),
+    )
+    .await;
 }
 
 async fn dispatch_click(
