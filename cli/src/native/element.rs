@@ -201,6 +201,31 @@ pub async fn resolve_element_center(
 
             if let Ok(r) = result {
                 let (x, y) = box_model_center(&r.model);
+                // Occlusion check: a transient overlay (X.com's "click
+                // outside to close" mask, modal backdrop, sticky banner,
+                // etc.) can land on top of our target between snapshot
+                // and click. Coordinates are correct, but
+                // `document.elementFromPoint(x, y)` returns the overlay
+                // — and the click goes to the overlay's handler, not
+                // ours. Catch it here so the user gets "occluded by
+                // DIV[testid=mask]" instead of "modal silently closed +
+                // thread submitted by accident".
+                //
+                // Set AGENT_BROWSER_VERIFY_CLICK_TARGET=0 to skip.
+                if std::env::var("AGENT_BROWSER_VERIFY_CLICK_TARGET").as_deref() != Ok("0") {
+                    if let Err(e) = verify_click_target(
+                        client,
+                        effective_session_id,
+                        backend_node_id,
+                        &ref_id,
+                        x,
+                        y,
+                    )
+                    .await
+                    {
+                        return Err(e);
+                    }
+                }
                 return Ok((x, y, effective_session_id.to_string()));
             }
             // backend_node_id is stale; re-query the accessibility tree below
@@ -437,6 +462,146 @@ async fn verify_ref_identity(
          reusing nodes during re-render). Take a fresh snapshot, then re-target.\n\
          To bypass this guard set AGENT_BROWSER_VERIFY_REF=0.",
         ref_id, expected_role, expected_name, actual_role, actual_name,
+    ))
+}
+
+/// At the moment we'd dispatch the click, ask the page itself which element
+/// occupies (x, y). If it's not our target (and not a descendant or
+/// ancestor), an overlay has appeared between snapshot and click — we'd
+/// silently click the overlay otherwise. Returns Err with details about
+/// the occluding element so the caller can wait + re-snapshot.
+///
+/// Implemented as a single Runtime.callFunctionOn: resolve the cached
+/// backendNodeId to a remote object, then run a function on it that
+/// compares with elementFromPoint. The function returns null when the
+/// click is safe and a JSON string with diagnostic info when it isn't.
+async fn verify_click_target(
+    client: &CdpClient,
+    session_id: &str,
+    backend_node_id: i64,
+    ref_id: &str,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    use serde::Deserialize;
+
+    // Tight 500ms timeout — this is a defensive guard, not critical path.
+    // If it can't run quickly, fall through and let the click proceed
+    // (we're no worse off than the unguarded code path).
+    let resolve_params = DomResolveNodeParams {
+        backend_node_id: Some(backend_node_id),
+        node_id: None,
+        object_group: Some("agent-browser-occlusion".to_string()),
+    };
+    let resolve_fut = client.send_command_typed::<_, serde_json::Value>(
+        "DOM.resolveNode",
+        &resolve_params,
+        Some(session_id),
+    );
+    let Ok(resolve_resp) =
+        tokio::time::timeout(std::time::Duration::from_millis(500), resolve_fut).await
+    else {
+        return Ok(());
+    };
+    let Ok(resolved) = resolve_resp else { return Ok(()) };
+    let Some(object_id) = resolved
+        .get("object")
+        .and_then(|o| o.get("objectId"))
+        .and_then(|v| v.as_str())
+    else {
+        return Ok(());
+    };
+
+    // function(x, y) { ... } where `this` is the target element.
+    // Return null  → click is safe.
+    // Return JSON  → describes the occluding element.
+    let function_decl = "function(x, y) { \
+        const at = document.elementFromPoint(x, y); \
+        if (!at) return JSON.stringify({reason:'no-element-at-point'}); \
+        if (at === this || this.contains(at) || at.contains(this)) return null; \
+        return JSON.stringify({ \
+            tag: at.tagName, \
+            testid: (at.dataset && at.dataset.testid) || null, \
+            role: at.getAttribute('role'), \
+            ariaLabel: at.getAttribute('aria-label'), \
+            text: ((at.textContent||'').trim().slice(0, 60)) \
+        }); \
+    }";
+    let call_params = serde_json::json!({
+        "objectId": object_id,
+        "functionDeclaration": function_decl,
+        "arguments": [{"value": x}, {"value": y}],
+        "returnByValue": true,
+    });
+    let call_fut = client.send_command_typed::<_, serde_json::Value>(
+        "Runtime.callFunctionOn",
+        &call_params,
+        Some(session_id),
+    );
+    let Ok(call_resp) =
+        tokio::time::timeout(std::time::Duration::from_millis(500), call_fut).await
+    else {
+        return Ok(());
+    };
+    let Ok(call_result) = call_resp else {
+        return Ok(());
+    };
+
+    let value = call_result
+        .get("result")
+        .and_then(|r| r.get("value"));
+
+    // null / undefined / missing → safe
+    let json_str = match value {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        _ => return Ok(()),
+    };
+
+    #[derive(Deserialize)]
+    struct Occluder {
+        tag: Option<String>,
+        testid: Option<String>,
+        role: Option<String>,
+        #[serde(rename = "ariaLabel")]
+        aria_label: Option<String>,
+        text: Option<String>,
+        reason: Option<String>,
+    }
+    let occ: Occluder = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    if let Some(reason) = occ.reason {
+        return Err(format!(
+            "Ref {} cannot be clicked at its computed position: {}. \
+             The element may have moved off-screen — re-run snapshot.",
+            ref_id, reason
+        ));
+    }
+
+    let mut desc = occ.tag.unwrap_or_else(|| "unknown".to_string());
+    if let Some(t) = occ.testid {
+        desc.push_str(&format!("[testid={}]", t));
+    }
+    if let Some(r) = occ.role {
+        desc.push_str(&format!("[role={}]", r));
+    }
+    if let Some(a) = occ.aria_label {
+        desc.push_str(&format!("[aria-label=\"{}\"]", a));
+    }
+    if let Some(t) = occ.text {
+        if !t.is_empty() {
+            desc.push_str(&format!(" text=\"{}\"", t));
+        }
+    }
+    Err(format!(
+        "Ref {} is occluded by {} at the click point. \
+         A transient overlay (modal backdrop, mask, sticky banner, etc.) \
+         appeared between snapshot and click. \
+         Wait for it to clear or re-snapshot, then retry. \
+         Set AGENT_BROWSER_VERIFY_CLICK_TARGET=0 to bypass this guard.",
+        ref_id, desc
     ))
 }
 
