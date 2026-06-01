@@ -633,6 +633,8 @@ impl DaemonState {
                         .send_command_no_params("Network.enable", Some(iframe_sid.as_str()))
                         .await;
                 }
+                // Hide automation markers in this cross-origin iframe session too.
+                apply_stealth_via_mgr(mgr, iframe_sid.as_str()).await;
             }
         }
         for sid in &drained.detached_iframe_sessions {
@@ -1758,43 +1760,60 @@ fn chrome_relaunch_hint() -> &'static str {
 /// Called after every successful launch / CDP connect / auto-connect.
 /// Uses `CdpAttach` mode for external connections (minimal patches) and
 /// `FullLaunch` mode for newly launched Chrome (all patches).
-async fn apply_stealth_to_browser(state: &DaemonState) {
-    if env::var("AGENT_BROWSER_STEALTH").map(|v| v == "0").unwrap_or(false) {
-        return; // Explicitly disabled
-    }
-    let Some(ref mgr) = state.browser else {
-        return;
-    };
-    let Ok(session_id) = mgr.active_session_id() else {
-        return;
-    };
+/// Whether stealth is enabled (default on; `AGENT_BROWSER_STEALTH=0` disables).
+fn stealth_enabled() -> bool {
+    !env::var("AGENT_BROWSER_STEALTH")
+        .map(|v| v == "0")
+        .unwrap_or(false)
+}
 
-    // Determine mode: if we attached to an external browser, use minimal patches.
-    // The user's real Chrome already has a genuine fingerprint — heavy patches
-    // would create detectable "lies" (e.g. creepjs hasIframeProxy).
+/// Apply stealth patches to ONE CDP session of the given browser.
+///
+/// Stealth scripts are registered per-session via
+/// `Page.addScriptToEvaluateOnNewDocument`, so they do NOT carry over to new
+/// tabs or cross-origin iframe sessions created after the initial page. We must
+/// re-apply to every session the user can touch, otherwise automation markers
+/// (and, in FullLaunch mode, the HeadlessChrome UA) leak on those surfaces.
+async fn apply_stealth_via_mgr(mgr: &BrowserManager, session_id: &str) {
+    if !stealth_enabled() {
+        return;
+    }
+    // Determine mode: an external attach uses minimal patches (the user's real
+    // Chrome already has a genuine fingerprint — heavy patches create detectable
+    // "lies" like creepjs hasIframeProxy); a fresh launch uses the full set.
     let mode = if mgr.is_cdp_connection() {
         stealth::StealthMode::CdpAttach
     } else {
         stealth::StealthMode::FullLaunch
     };
-
     let locale = env::var("AGENT_BROWSER_LOCALE").ok();
-    if let Err(e) = stealth::apply_stealth(
-        &mgr.client,
-        session_id,
-        mode,
-        locale.as_deref(),
-    )
-    .await
-    {
-        eprintln!("[stealth] Failed to apply stealth patches: {}", e);
+    if let Err(e) = stealth::apply_stealth(&mgr.client, session_id, mode, locale.as_deref()).await {
+        eprintln!("[stealth] failed to apply patches to session {session_id}: {e}");
     }
-    // Also inject into the current page (already loaded before our init script)
+    // Also inject into the current page (already loaded before our init script).
     if let Err(e) =
-        stealth::apply_stealth_to_current_page(&mgr.client, session_id, mode, locale.as_deref()).await
+        stealth::apply_stealth_to_current_page(&mgr.client, session_id, mode, locale.as_deref())
+            .await
     {
-        eprintln!("[stealth] Failed to patch current page: {}", e);
+        eprintln!("[stealth] failed to patch current page for session {session_id}: {e}");
     }
+}
+
+/// Apply stealth to a specific session of the active browser (no-op if no
+/// browser or stealth disabled).
+async fn apply_stealth_to_session(state: &DaemonState, session_id: &str) {
+    if let Some(ref mgr) = state.browser {
+        apply_stealth_via_mgr(mgr, session_id).await;
+    }
+}
+
+/// Apply stealth to the active page session (initial connect/launch).
+async fn apply_stealth_to_browser(state: &DaemonState) {
+    let session_id = match state.browser.as_ref().and_then(|m| m.active_session_id().ok()) {
+        Some(sid) => sid.to_string(),
+        None => return,
+    };
+    apply_stealth_to_session(state, &session_id).await;
 }
 
 /// If the previous daemon left a `.restore-url` sidecar (because it was killed
@@ -3948,13 +3967,26 @@ async fn handle_tab_list(state: &DaemonState) -> Result<Value, String> {
 }
 
 async fn handle_tab_new(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
-    let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
     let url = cmd.get("url").and_then(|v| v.as_str());
     let label = cmd.get("label").and_then(|v| v.as_str());
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    mgr.tab_new(url, label).await
+    let result = {
+        let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
+        mgr.tab_new(url, label).await?
+    };
+    // A new tab is a new CDP session; stealth scripts registered on the prior
+    // session don't carry over, so patch the new tab too.
+    if let Some(sid) = state
+        .browser
+        .as_ref()
+        .and_then(|m| m.active_session_id().ok())
+        .map(|s| s.to_string())
+    {
+        apply_stealth_to_session(state, &sid).await;
+    }
+    Ok(result)
 }
 
 async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {

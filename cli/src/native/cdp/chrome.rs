@@ -664,6 +664,62 @@ pub fn read_devtools_active_port(user_data_dir: &Path) -> Option<(u16, String)> 
     Some((port, ws_path))
 }
 
+/// Remove leftover Chrome temp profile directories from daemons that were
+/// hard-killed. `ChromeProcess::drop` cleans these up on a normal exit, but a
+/// `kill -9` (version-mismatch restart, OOM, crash) skips Drop and leaks ~50MB
+/// per session under the system temp dir. On daemon startup we sweep them — but
+/// ONLY dirs that no running process still references as `--user-data-dir`, so
+/// a profile in active use is never deleted.
+pub fn cleanup_orphaned_chrome_profiles() {
+    let tmp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&tmp) else {
+        return;
+    };
+    // Snapshot live process command lines once. If we can't determine them,
+    // skip cleanup entirely rather than risk deleting an in-use profile.
+    let Some(live_cmdlines) = running_process_cmdlines() else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("agent-browser-chrome-") {
+            continue;
+        }
+        let path = entry.path();
+        let path_str = path.to_string_lossy();
+        let in_use = live_cmdlines
+            .iter()
+            .any(|cmd| cmd.contains(path_str.as_ref()));
+        if !in_use {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn running_process_cmdlines() -> Option<Vec<String>> {
+    let output = std::process::Command::new("ps")
+        .args(["-axww", "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|l| l.to_string())
+            .collect(),
+    )
+}
+
+#[cfg(not(unix))]
+fn running_process_cmdlines() -> Option<Vec<String>> {
+    // Best-effort: skip cleanup where we can't cheaply enumerate full process
+    // command lines, to avoid deleting a profile that is still in use.
+    None
+}
+
 pub async fn auto_connect_cdp() -> Result<String, String> {
     let user_data_dirs = get_chrome_user_data_dirs();
 

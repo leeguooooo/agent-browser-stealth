@@ -59,6 +59,10 @@ pub async fn run_daemon(session: &str) {
         }
     }
 
+    // Sweep temp Chrome profiles leaked by hard-killed daemons (Drop doesn't
+    // run on kill -9). Only removes dirs no live process references.
+    super::cdp::chrome::cleanup_orphaned_chrome_profiles();
+
     let pid_path = socket_dir.join(format!("{}.pid", session));
     let _ = fs::write(&pid_path, process::id().to_string());
 
