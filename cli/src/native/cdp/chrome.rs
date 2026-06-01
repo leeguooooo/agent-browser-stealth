@@ -741,7 +741,11 @@ pub async fn auto_connect_cdp() -> Result<String, String> {
         }
     }
 
-    Err("No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp.".to_string())
+    Err("No running Chrome with remote debugging found. Remote debugging is a \
+         startup flag, not a setting: fully quit Chrome and relaunch it with \
+         --remote-debugging-port=9222 (then agent-browser auto-connects), or pass \
+         --cdp <port>/--launch."
+        .to_string())
 }
 
 /// Resolve a CDP WebSocket URL from a DevToolsActivePort entry.

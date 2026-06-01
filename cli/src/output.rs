@@ -1042,6 +1042,11 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
 
         // Default success
         println!("{} Done", color::success_indicator());
+    } else {
+        // Success response with no data payload — still confirm the command ran
+        // instead of printing nothing (a silent exit 0 looks like a no-op and
+        // hides whether anything happened).
+        println!("{} Done", color::success_indicator());
     }
 
     print_warning(resp);

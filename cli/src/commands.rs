@@ -1066,6 +1066,18 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
         // === Get ===
         "get" => parse_get(&rest, &id),
 
+        // Top-level shortcuts for `get <x>` status reads — users naturally type
+        // `agent-browser url` / `cdp-url` / `title` without the `get` prefix
+        // (and expect `cdp-url`/`cdp_url` to work interchangeably).
+        "url" | "cdp-url" | "cdp_url" | "title" | "html" | "text" | "value"
+        | "count" | "box" | "styles" | "attr" => {
+            let sub = if cmd == "cdp_url" { "cdp-url" } else { cmd };
+            let mut get_args: Vec<&str> = Vec::with_capacity(rest.len() + 1);
+            get_args.push(sub);
+            get_args.extend_from_slice(&rest);
+            parse_get(&get_args, &id)
+        }
+
         // === Is (state checks) ===
         "is" => parse_is(&rest, &id),
 

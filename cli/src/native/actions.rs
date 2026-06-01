@@ -1607,11 +1607,14 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
                 // Return a helpful error guiding the user to enable it.
                 return Err(format!(
                     "Could not connect to your Chrome browser.\n\n\
-                     To let agent-browser work with your existing Chrome (recommended):\n\
+                     If Chrome showed an \"Allow remote debugging?\" dialog, click \
+                     Allow and re-run — that consent is what lets agent-browser attach.\n\n\
+                     Otherwise, to let agent-browser work with your existing Chrome (recommended):\n\
                      {}\n\n\
                      Or start a standalone browser with: agent-browser --launch open <url>\n\n\
-                     Note: chrome://inspect/#remote-debugging only enables remote *target discovery* — \
-                     it does NOT expose the standard CDP HTTP API on /json/version. \
+                     Note: remote debugging is a startup flag, not a Chrome setting — \
+                     chrome://inspect/#remote-debugging only enables target discovery and \
+                     does NOT expose the CDP HTTP API on /json/version. \
                      A full restart with --remote-debugging-port=<port> is required.",
                     chrome_relaunch_hint(),
                 ));
@@ -2167,11 +2170,14 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             Err(_e) => {
                 return Err(format!(
                     "Could not connect to your Chrome browser.\n\n\
-                     To let agent-browser work with your existing Chrome (recommended):\n\
+                     If Chrome showed an \"Allow remote debugging?\" dialog, click \
+                     Allow and re-run — that consent is what lets agent-browser attach.\n\n\
+                     Otherwise, to let agent-browser work with your existing Chrome (recommended):\n\
                      {}\n\n\
                      Or start a standalone browser with: agent-browser --launch open <url>\n\n\
-                     Note: chrome://inspect/#remote-debugging only enables remote *target discovery* — \
-                     it does NOT expose the standard CDP HTTP API on /json/version. \
+                     Note: remote debugging is a startup flag, not a Chrome setting — \
+                     chrome://inspect/#remote-debugging only enables target discovery and \
+                     does NOT expose the CDP HTTP API on /json/version. \
                      A full restart with --remote-debugging-port=<port> is required.",
                     chrome_relaunch_hint(),
                 ));
