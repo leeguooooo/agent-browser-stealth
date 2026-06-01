@@ -1,3 +1,4 @@
+use include_dir::{include_dir, Dir};
 use serde_json::json;
 use std::env;
 use std::fs;
@@ -5,6 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use crate::color;
+
+/// Skill content compiled into the binary so `skills get` works on a
+/// single-binary install (GitHub Release / install.sh), where there is no
+/// adjacent `skills/` or `skill-data/` on disk the way an npm install has.
+static EMBEDDED_SKILLS: Dir = include_dir!("$CARGO_MANIFEST_DIR/../skills");
+static EMBEDDED_SKILL_DATA: Dir = include_dir!("$CARGO_MANIFEST_DIR/../skill-data");
 
 struct SkillInfo {
     name: String,
@@ -63,6 +70,29 @@ fn find_package_root() -> Option<PathBuf> {
     None
 }
 
+/// Extract the binary-embedded skill content to a per-version cache dir on
+/// first use, returning a package root that contains `skills/` and
+/// `skill-data/`. Fallback for single-binary installs (GitHub Release /
+/// install.sh) that have no on-disk skill directories. Version-stamped so an
+/// upgraded binary re-extracts fresh content.
+fn embedded_skills_root() -> Option<PathBuf> {
+    let base = dirs::cache_dir()?
+        .join("agent-browser")
+        .join(concat!("skills-", env!("CARGO_PKG_VERSION")));
+    let marker = base.join(".extracted");
+    if !marker.exists() {
+        let _ = fs::create_dir_all(base.join("skills"));
+        let _ = fs::create_dir_all(base.join("skill-data"));
+        if EMBEDDED_SKILLS.extract(base.join("skills")).is_err()
+            || EMBEDDED_SKILL_DATA.extract(base.join("skill-data")).is_err()
+        {
+            return None;
+        }
+        let _ = fs::write(&marker, env!("CARGO_PKG_VERSION"));
+    }
+    base.join("skills").is_dir().then_some(base)
+}
+
 /// Collect all skill directories to search, respecting the env var override.
 fn find_skills_dirs() -> Vec<PathBuf> {
     // Env var override: single directory, used as-is
@@ -73,15 +103,28 @@ fn find_skills_dirs() -> Vec<PathBuf> {
         }
     }
 
-    let Some(root) = find_package_root() else {
-        return vec![];
-    };
+    // On-disk package root (npm install layout, or dev build walking up to repo).
+    if let Some(root) = find_package_root() {
+        let dirs: Vec<PathBuf> = SKILL_DIRS
+            .iter()
+            .map(|d| root.join(d))
+            .filter(|p| p.is_dir())
+            .collect();
+        if !dirs.is_empty() {
+            return dirs;
+        }
+    }
 
-    SKILL_DIRS
-        .iter()
-        .map(|d| root.join(d))
-        .filter(|p| p.is_dir())
-        .collect()
+    // Fallback: skill content compiled into the binary (single-binary install).
+    if let Some(root) = embedded_skills_root() {
+        return SKILL_DIRS
+            .iter()
+            .map(|d| root.join(d))
+            .filter(|p| p.is_dir())
+            .collect();
+    }
+
+    vec![]
 }
 
 /// Parse YAML frontmatter from a SKILL.md file. Returns (name, description, hidden).
