@@ -45,9 +45,16 @@ asset="agent-browser-${plat}${libc}-${cpu}"
 tag="${AGENT_BROWSER_VERSION:-}"
 if [ -z "$tag" ]; then
   info "resolving latest release..."
-  tag=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
-  [ -n "$tag" ] || err "could not resolve latest release tag (set AGENT_BROWSER_VERSION=vX.Y.Z)"
+  # Resolve via the releases/latest redirect on the github.com web host, NOT the
+  # api.github.com JSON API (which rate-limits unauthenticated callers to 60/hr).
+  # github.com/<repo>/releases/latest -> 302 -> github.com/<repo>/releases/tag/<TAG>
+  loc=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)
+  case "$loc" in
+    */releases/tag/*) tag="${loc##*/releases/tag/}" ;;
+    *) tag="" ;;
+  esac
+  [ -n "$tag" ] || err "could not resolve latest release (set AGENT_BROWSER_VERSION=vX.Y.Z)"
 fi
 
 base="https://github.com/${REPO}/releases/download/${tag}"
