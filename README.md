@@ -21,8 +21,19 @@ For basic usage, commands, and API reference, see the [upstream documentation](h
 ## Install
 
 ```bash
-npm install -g agent-browser-stealth
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/install.sh | sh
 ```
+
+Downloads the prebuilt binary for your platform from the latest [GitHub Release](https://github.com/leeguooooo/agent-browser-stealth/releases) and installs `agent-browser` (+ the `abs` alias). No npm, no tokens.
+
+<details>
+<summary>Other ways to install</summary>
+
+- **Pin a version:** `AGENT_BROWSER_VERSION=v0.27.0-fork.11 curl -fsSL https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/install.sh | sh`
+- **Custom location:** `AGENT_BROWSER_BIN_DIR=$HOME/bin curl -fsSL … | sh`
+- **Windows:** download `agent-browser-win32-x64.tar.gz` from the [Releases page](https://github.com/leeguooooo/agent-browser-stealth/releases) and put `agent-browser.exe` on your PATH.
+- **npm (legacy):** `npm install -g agent-browser-stealth` — still published, but GitHub Releases is the primary channel now.
+</details>
 
 ### Install the AI agent skills
 

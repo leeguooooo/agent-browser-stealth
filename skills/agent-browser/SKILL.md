@@ -10,7 +10,13 @@ hidden: true
 Fast browser automation CLI for AI agents. Chrome/Chromium via CDP with
 accessibility-tree snapshots and compact `@eN` element refs.
 
-Install: `npm i -g agent-browser && agent-browser install`
+**Install / self-heal:** if the `agent-browser` (or `abs`) command is missing —
+e.g. a command errors with "command not found" — install it from the GitHub
+Release (no npm, no token), then retry. Do NOT fall back to other browser tools:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/install.sh | sh
+```
 
 ## Start here
 
