@@ -3690,13 +3690,38 @@ async fn handle_console(cmd: &Value, state: &mut DaemonState) -> Result<Value, S
         state.event_tracker.clear_console();
         Ok(json!({ "cleared": true }))
     } else {
-        let result = state.event_tracker.get_console_json();
+        let mut result = state.event_tracker.get_console_json();
+        if !console_capture_active(state) {
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert("hint".to_string(), json!(CONSOLE_DISABLED_HINT));
+            }
+        }
         Ok(result)
     }
 }
 
+/// Whether the active browser session has the CDP `Runtime` domain enabled
+/// (required to receive console/error events). OFF by default for stealth.
+fn console_capture_active(state: &DaemonState) -> bool {
+    state
+        .browser
+        .as_ref()
+        .map(|b| b.capture_console)
+        .unwrap_or(false)
+}
+
+const CONSOLE_DISABLED_HINT: &str =
+    "console/error capture is disabled for stealth (Runtime.enable is a detectable CDP \
+     signal). Restart the session with AGENT_BROWSER_CAPTURE_CONSOLE=1 to capture page output.";
+
 async fn handle_errors(state: &DaemonState) -> Result<Value, String> {
-    Ok(state.event_tracker.get_errors_json())
+    let mut result = state.event_tracker.get_errors_json();
+    if !console_capture_active(state) {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("hint".to_string(), json!(CONSOLE_DISABLED_HINT));
+        }
+    }
+    Ok(result)
 }
 
 async fn handle_state_save(cmd: &Value, state: &DaemonState) -> Result<Value, String> {

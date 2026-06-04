@@ -305,6 +305,22 @@ pub struct BrowserManager {
     /// Origins visited during this session, used by save_state to collect cross-origin localStorage.
     visited_origins: HashSet<String>,
     next_tab_id: u32,
+    /// Whether to enable the CDP `Runtime` domain (console / error / exception capture).
+    /// OFF by default for stealth: a live `Runtime.enable` is a detectable CDP signal
+    /// (the patchright / rebrowser "runtime leak") — even when attached to the user's
+    /// real Chrome. Opt in via `AGENT_BROWSER_CAPTURE_CONSOLE=1` when you need the
+    /// `console` / `errors` commands to return page output.
+    pub capture_console: bool,
+}
+
+/// Whether console/error capture (and thus `Runtime.enable`) is opted into for this
+/// daemon. Defaults to `false` so the common automation path leaves no Runtime-domain
+/// fingerprint. Set `AGENT_BROWSER_CAPTURE_CONSOLE=1` (or `true`) to turn it on.
+pub fn console_capture_enabled() -> bool {
+    std::env::var("AGENT_BROWSER_CAPTURE_CONSOLE")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 const LIGHTPANDA_CDP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -413,6 +429,7 @@ impl BrowserManager {
                 ignore_https_errors,
                 visited_origins: HashSet::new(),
                 next_tab_id: 1,
+                capture_console: console_capture_enabled(),
             };
             manager.discover_and_attach_targets().await?;
             manager
@@ -502,6 +519,7 @@ impl BrowserManager {
             ignore_https_errors: false,
             visited_origins: HashSet::new(),
             next_tab_id: 1,
+            capture_console: console_capture_enabled(),
         };
 
         if direct_page {
@@ -629,9 +647,14 @@ impl BrowserManager {
         self.client
             .send_command_no_params("Page.enable", Some(session_id))
             .await?;
-        self.client
-            .send_command_no_params("Runtime.enable", Some(session_id))
-            .await?;
+        // `Runtime.enable` leaves a detectable CDP signal (the patchright/rebrowser
+        // "runtime leak"), so only enable it when console/error capture is opted in.
+        // `Runtime.evaluate` / `Runtime.callFunctionOn` work fine without it.
+        if self.capture_console {
+            self.client
+                .send_command_no_params("Runtime.enable", Some(session_id))
+                .await?;
+        }
         // Resume the target if it is paused waiting for the debugger.
         // This is needed for real browser sessions (Chrome 144+) where targets
         // are paused after attach until explicitly resumed. No-op otherwise.
@@ -665,9 +688,12 @@ impl BrowserManager {
         self.client
             .send_command_no_params("Page.enable", None)
             .await?;
-        self.client
-            .send_command_no_params("Runtime.enable", None)
-            .await?;
+        // See `enable_domains`: `Runtime.enable` is a CDP fingerprint, gated on opt-in.
+        if self.capture_console {
+            self.client
+                .send_command_no_params("Runtime.enable", None)
+                .await?;
+        }
         let _ = self
             .client
             .send_command_no_params("Runtime.runIfWaitingForDebugger", None)
@@ -1659,6 +1685,7 @@ async fn initialize_lightpanda_manager(
             ignore_https_errors: false,
             visited_origins: HashSet::new(),
             next_tab_id: 1,
+            capture_console: console_capture_enabled(),
         };
 
         match discover_and_attach_lightpanda_targets(&mut manager, deadline).await {

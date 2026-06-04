@@ -51,18 +51,52 @@ pub fn build_stealth_script(mode: StealthMode, locale: Option<&str>) -> String {
         vec![locale, base_lang]
     };
     let config_line = format!(
-        r#"const __abStealth = {{ locale: "{}", languages: {}, allowWebGLContextFallback: false }};"#,
+        r#"const __abStealth = {{ locale: "{}", languages: {}, allowWebGLContextFallback: false, hideCanvas: {}, canvasSeed: {} }};"#,
         locale,
         serde_json::to_string(&languages).unwrap_or_else(|_| r#"["en-US","en"]"#.to_string()),
+        hide_canvas_enabled(),
+        canvas_noise_seed(),
     );
 
+    // NB: this prefix MUST match the first line of stealth_scripts.js verbatim,
+    // otherwise the fallback below prepends a SECOND `const __abStealth`
+    // declaration and the whole script dies with a redeclaration SyntaxError.
     if let Some(rest) = STEALTH_SCRIPTS_RAW.strip_prefix(
-        r#"const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLContextFallback: false };"#,
+        r#"const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLContextFallback: false, hideCanvas: false, canvasSeed: 0 };"#,
     ) {
         format!("{}{}", config_line, rest)
     } else {
         format!("{}\n{}", config_line, STEALTH_SCRIPTS_RAW)
     }
+}
+
+/// Whether canvas/audio fingerprint noise is opted into (FullLaunch only).
+/// OFF by default: injecting noise is a deliberate "lie" that can itself be a
+/// tell, so it's reserved for users who explicitly want it via
+/// `AGENT_BROWSER_HIDE_CANVAS=1`.
+fn hide_canvas_enabled() -> bool {
+    std::env::var("AGENT_BROWSER_HIDE_CANVAS")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// A per-process seed so canvas/audio noise is STABLE within a session (a real
+/// device returns the same hash on repeated reads) but differs from the
+/// headless-stable default. 0 is avoided so the JS can treat it as "unset".
+fn canvas_noise_seed() -> u32 {
+    use std::sync::OnceLock;
+    static SEED: OnceLock<u32> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0x9e3779b9);
+        // mix the bits a little, then force non-zero
+        let mixed = nanos ^ nanos.rotate_left(13).wrapping_mul(2654435761);
+        mixed | 1
+    })
 }
 
 /// Apply stealth patches to a browser session.
@@ -118,9 +152,112 @@ pub async fn apply_stealth(
                     .await?;
             }
         }
+
+        // Align the timezone for fresh launches when explicitly requested.
+        // Headless/launched Chrome often reports UTC (or the host's zone), which
+        // can contradict a proxy's geolocation or a spoofed locale.
+        // `Emulation.setTimezoneOverride` is a NATIVE override — Intl.DateTimeFormat
+        // and Date both follow it with no detectable JS lie. Opt-in only:
+        //   AGENT_BROWSER_TIMEZONE=<IANA id>  -> use that zone (e.g. align to proxy)
+        //   AGENT_BROWSER_TIMEZONE=auto       -> derive a default from the locale
+        //   (unset)                           -> leave the real timezone untouched
+        if let Some(tz) = resolve_timezone(locale) {
+            let _ = client
+                .send_command(
+                    "Emulation.setTimezoneOverride",
+                    Some(json!({ "timezoneId": tz })),
+                    Some(session_id),
+                )
+                .await;
+        }
     }
 
     Ok(())
+}
+
+/// Resolve the timezone to emulate for a fresh-launch session, if any.
+/// Controlled by `AGENT_BROWSER_TIMEZONE`: an explicit IANA id, or `auto` to
+/// derive a sensible default from the locale. Returns `None` (leave the real
+/// timezone) when unset, empty, or when `auto` can't map the locale.
+fn resolve_timezone(locale: Option<&str>) -> Option<String> {
+    let raw = std::env::var("AGENT_BROWSER_TIMEZONE").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw.eq_ignore_ascii_case("auto") {
+        return locale
+            .and_then(locale_default_timezone)
+            .map(str::to_string);
+    }
+    Some(raw.to_string())
+}
+
+/// Best-effort IANA timezone for a locale. Used only for
+/// `AGENT_BROWSER_TIMEZONE=auto`; unknown locales return `None` so the real
+/// timezone is left untouched rather than guessing a wrong one.
+#[cfg(test)]
+mod timezone_tests {
+    use super::{locale_default_timezone, resolve_timezone};
+
+    #[test]
+    fn maps_common_locales_case_insensitively() {
+        assert_eq!(locale_default_timezone("en-US"), Some("America/New_York"));
+        assert_eq!(locale_default_timezone("ja-JP"), Some("Asia/Tokyo"));
+        assert_eq!(locale_default_timezone("zh-CN"), Some("Asia/Shanghai"));
+        assert_eq!(locale_default_timezone("ZH-TW"), Some("Asia/Taipei"));
+        assert_eq!(locale_default_timezone("ja"), Some("Asia/Tokyo"));
+    }
+
+    #[test]
+    fn unknown_locale_returns_none() {
+        assert_eq!(locale_default_timezone("xx-YY"), None);
+        assert_eq!(locale_default_timezone(""), None);
+    }
+
+    #[test]
+    fn resolve_timezone_honors_env() {
+        // Serialized via a single test to avoid cross-test env races on this key.
+        std::env::remove_var("AGENT_BROWSER_TIMEZONE");
+        assert_eq!(resolve_timezone(Some("en-US")), None);
+
+        std::env::set_var("AGENT_BROWSER_TIMEZONE", "Europe/Berlin");
+        assert_eq!(resolve_timezone(None), Some("Europe/Berlin".to_string()));
+
+        std::env::set_var("AGENT_BROWSER_TIMEZONE", "  ");
+        assert_eq!(resolve_timezone(Some("en-US")), None);
+
+        std::env::set_var("AGENT_BROWSER_TIMEZONE", "auto");
+        assert_eq!(resolve_timezone(Some("ja-JP")), Some("Asia/Tokyo".to_string()));
+        assert_eq!(resolve_timezone(Some("xx-YY")), None);
+        assert_eq!(resolve_timezone(None), None);
+
+        std::env::remove_var("AGENT_BROWSER_TIMEZONE");
+    }
+}
+
+fn locale_default_timezone(locale: &str) -> Option<&'static str> {
+    let tz = match locale.to_ascii_lowercase().as_str() {
+        "en-us" => "America/New_York",
+        "en-ca" => "America/Toronto",
+        "en-gb" => "Europe/London",
+        "en-au" => "Australia/Sydney",
+        "ja" | "ja-jp" => "Asia/Tokyo",
+        "ko" | "ko-kr" => "Asia/Seoul",
+        "zh-cn" | "zh-hans" | "zh-hans-cn" => "Asia/Shanghai",
+        "zh-tw" | "zh-hant" | "zh-hant-tw" => "Asia/Taipei",
+        "zh-hk" => "Asia/Hong_Kong",
+        "de" | "de-de" => "Europe/Berlin",
+        "fr" | "fr-fr" => "Europe/Paris",
+        "es" | "es-es" => "Europe/Madrid",
+        "it" | "it-it" => "Europe/Rome",
+        "nl" | "nl-nl" => "Europe/Amsterdam",
+        "pt-br" => "America/Sao_Paulo",
+        "pt" | "pt-pt" => "Europe/Lisbon",
+        "ru" | "ru-ru" => "Europe/Moscow",
+        _ => return None,
+    };
+    Some(tz)
 }
 
 /// Get the browser's User-Agent string via CDP.

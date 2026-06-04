@@ -146,6 +146,30 @@ struct ChromeArgs {
     temp_user_data_dir: Option<PathBuf>,
 }
 
+/// Decide the `--force-webrtc-ip-handling-policy` value, if any, for a launched
+/// Chrome. Returns `None` to leave WebRTC at Chrome's default behavior.
+fn webrtc_ip_handling_policy(has_proxy: bool) -> Option<&'static str> {
+    let opt_in = std::env::var("AGENT_BROWSER_BLOCK_WEBRTC").ok();
+    let explicitly_off = opt_in
+        .as_deref()
+        .is_some_and(|v| v == "0" || v.eq_ignore_ascii_case("false"));
+    if explicitly_off {
+        return None;
+    }
+    let explicitly_on = opt_in
+        .as_deref()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    if has_proxy {
+        // Force all WebRTC UDP through the proxy so the real IP can't leak.
+        Some("disable_non_proxied_udp")
+    } else if explicitly_on {
+        // No proxy, but the user asked to hide the local network IP.
+        Some("default_public_interface_only")
+    } else {
+        None
+    }
+}
+
 fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
     let mut args = vec![
         "--remote-debugging-port=0".to_string(),
@@ -202,6 +226,20 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
 
     if let Some(ref bypass) = options.proxy_bypass {
         args.push(format!("--proxy-bypass-list={}", bypass));
+    }
+
+    // WebRTC IP-leak handling. WebRTC enumerates ICE candidates that can expose
+    // the machine's real local/public IP even when HTTP traffic goes through a
+    // proxy — defeating the proxy. `--force-webrtc-ip-handling-policy` is a real
+    // Chrome privacy switch (no detectable JS lie), applied here for launched
+    // Chrome only (an attached real Chrome keeps the user's own flags).
+    //   - proxy set            -> `disable_non_proxied_udp`: force WebRTC through
+    //                             the proxy so the real IP can't leak.
+    //   - AGENT_BROWSER_BLOCK_WEBRTC=1 (no proxy) -> `default_public_interface_only`:
+    //                             hide the local network IP (Brave/uBlock default).
+    // Opt out entirely with AGENT_BROWSER_BLOCK_WEBRTC=0.
+    if let Some(policy) = webrtc_ip_handling_policy(options.proxy.is_some()) {
+        args.push(format!("--force-webrtc-ip-handling-policy={}", policy));
     }
 
     let (user_data_dir, temp_user_data_dir) = if let Some(ref profile) = options.profile {
@@ -1342,6 +1380,37 @@ fn expand_tilde(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
+
+    #[test]
+    fn webrtc_policy_forces_proxy_when_proxy_set() {
+        let g = EnvGuard::new(&["AGENT_BROWSER_BLOCK_WEBRTC"]);
+        g.remove("AGENT_BROWSER_BLOCK_WEBRTC");
+        // Proxy set, no env: always force WebRTC through the proxy.
+        assert_eq!(
+            webrtc_ip_handling_policy(true),
+            Some("disable_non_proxied_udp")
+        );
+        // No proxy, no env: leave WebRTC at Chrome's default.
+        assert_eq!(webrtc_ip_handling_policy(false), None);
+    }
+
+    #[test]
+    fn webrtc_policy_opt_in_and_opt_out() {
+        let g = EnvGuard::new(&["AGENT_BROWSER_BLOCK_WEBRTC"]);
+
+        g.set("AGENT_BROWSER_BLOCK_WEBRTC", "1");
+        assert_eq!(
+            webrtc_ip_handling_policy(false),
+            Some("default_public_interface_only")
+        );
+
+        // Explicit opt-out wins even when a proxy is set.
+        g.set("AGENT_BROWSER_BLOCK_WEBRTC", "0");
+        assert_eq!(webrtc_ip_handling_policy(true), None);
+        assert_eq!(webrtc_ip_handling_policy(false), None);
+
+        g.remove("AGENT_BROWSER_BLOCK_WEBRTC");
+    }
 
     #[cfg(unix)]
     fn spawn_noop_child() -> Child {
