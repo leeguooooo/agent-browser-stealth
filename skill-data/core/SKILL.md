@@ -29,6 +29,45 @@ Refs (`@e1`, `@e2`, ...) are assigned fresh on every snapshot. They become
 submits, dynamic re-renders, dialog opens. Always re-snapshot before your
 next ref interaction.
 
+## Before you automate: pick the cheapest tool
+
+Driving a browser is the heavy option. agent-browser earns its keep when you
+need a **real, logged-in browser** — not for reading text off a public page.
+
+| You need | Use |
+|---|---|
+| Discover what exists / find sources | `WebSearch` |
+| Specific facts from a static or public page | `WebFetch` or `curl` (no browser) |
+| Login state, interaction, JS-rendered or anti-bot pages | **agent-browser** (this skill) |
+| A page the user visited before / an internal system | local bookmarks & history, then agent-browser |
+
+Don't hand-build deep URLs with query params — links discovered by *interacting*
+with the site carry the right hidden context and dodge anti-bot checks; a
+hand-constructed URL often doesn't.
+
+## Two ways to drive a page — and when to drop to `eval`
+
+You have a **real Chrome with the user's DOM**. Two layers, mix them freely:
+
+1. **Structured** (`snapshot` + `@ref`, `find`, typed actions) — convenient and
+   readable; best for straightforward forms and navigation. But the a11y view is
+   *lossy and fragile*: refs go stale on any change, hidden inputs never show up,
+   overlays can block coordinate clicks.
+2. **eval-first** (`agent-browser eval "<js>"`) — your eyes and hands on the real
+   DOM: read hidden inputs, reach into Shadow DOM / iframes, inspect
+   `form.elements` and `.validity`, extract the exact shape you want, or call
+   `el.click()` directly. **The moment the structured path fights you, drop to
+   `eval` instead of retrying it** — it's the fast way to find *why* something
+   failed (e.g. a hidden `point_choice=none` the UI never exposes).
+
+```bash
+# "what's actually in this form / why won't it submit?"
+agent-browser eval "[...document.forms[0].elements].map(e=>[e.name,e.type,e.value,e.checked])"
+agent-browser eval "document.querySelector('[name=point_choice]')?.value"
+agent-browser eval "[...document.forms[0].elements].filter(e=>!e.validity.valid).map(e=>e.name+': '+e.validationMessage)"
+agent-browser eval "document.querySelector('#stubborn').click()"   # direct DOM click, bypasses overlays
+```
+
 ## Quickstart
 
 ```bash
@@ -137,9 +176,17 @@ agent-browser fill "input[name=email]" "user@test.com"
 agent-browser click "button.primary"
 ```
 
-Rule of thumb: snapshot + `@eN` refs are fastest and most reliable for
-AI agents. `find role/text/label` is next best and doesn't require a prior
-snapshot. Raw CSS is a fallback when the others fail.
+Escalation ladder: snapshot + `@eN` refs are quickest for straightforward
+pages → `find role/text/label` when you'd rather skip the snapshot → raw CSS
+→ **`eval` the moment any of those fight you** (stale refs, hidden state,
+occluded clicks). Don't retry a flaky structured locator three times; drop to
+`eval` and act on the DOM directly.
+
+`click` auto-scrolls into view and, if the coordinate click is occluded, falls
+back to a DOM `.click()`. If a click *reports success but nothing happened* —
+classic for an autocomplete/menu `<li>` that closes on the input's blur — retry
+that one with `AGENT_BROWSER_CLICK_MODE=dom agent-browser click ...`, or just
+`agent-browser eval "<select the item via JS>"`.
 
 ## Waiting (read this)
 
