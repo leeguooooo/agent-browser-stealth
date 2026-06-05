@@ -256,6 +256,44 @@ AGENT_BROWSER_SESSION_NAME=my-app agent-browser open https://app.example.com
 # State is auto-saved and restored on subsequent runs with the same name.
 ```
 
+### Remember a site's quirks (site notes)
+
+A site behaves the same every time you visit it. When you work out something
+durable — a working selector, a URL pattern, a hidden field a form needs, an
+anti-bot trap, what requires login — **write it down so the next run doesn't
+re-discover it.** Keep one markdown file per domain (these are your own notes,
+not shipped with the skill):
+
+```
+~/.agent-browser/site-patterns/<domain>.md
+```
+
+**Before** working on a domain, read its file if it exists (use your normal file
+tools — this is plain markdown you own). Treat it as *hints, not guarantees* —
+sites change; verify before relying. **After** a successful session that taught
+you something durable, create or update it. Suggested shape:
+
+```markdown
+---
+domain: app.example.com
+updated: 2026-06-05
+---
+## Platform traits
+SPA; form renders ~1s after load (wait --text). Cloudflare on /login.
+
+## Working patterns
+- Address pick: the `<li>` closes on blur — select with CLICK_MODE=dom.
+- Submit needs hidden `point_choice` set (eval), the UI never exposes it.
+- Stable selector for "Continue": button[data-testid=submit]
+
+## Known traps (date them)
+- 2026-06-05: @ref to the basket button goes stale after the mini-cart opens;
+  re-snapshot or use `find role button --name "Checkout"`.
+```
+
+This is how repeat visits get fast and reliable instead of re-solving the same
+page every time.
+
 ### Extract data
 
 ```bash
