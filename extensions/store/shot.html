@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<style>
+  html,body{margin:0;width:1280px;height:800px;overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#e2e8f0}
+  .wrap{display:flex;flex-direction:column;height:100%;padding:56px 64px;box-sizing:border-box}
+  h1{font-size:46px;margin:0 0 6px;font-weight:700;letter-spacing:-.5px;color:#fff}
+  .tag{font-size:21px;color:#94a3b8;margin:0 0 32px;font-weight:400}
+  .accent{color:#38bdf8}
+  .term{background:#0b1220;border:1px solid #334155;border-radius:14px;
+    box-shadow:0 24px 60px rgba(0,0,0,.45);overflow:hidden;flex:1;display:flex;flex-direction:column}
+  .bar{background:#1e293b;padding:13px 18px;display:flex;gap:9px;align-items:center;border-bottom:1px solid #334155}
+  .dot{width:13px;height:13px;border-radius:50%}
+  .r{background:#ff5f56}.y{background:#ffbd2e}.g{background:#27c93f}
+  .bartitle{color:#64748b;font-size:14px;margin-left:12px;font-family:ui-monospace,monospace}
+  pre{margin:0;padding:26px 30px;font-family:ui-monospace,"SF Mono",Menlo,monospace;
+    font-size:19.5px;line-height:1.72;flex:1}
+  .p{color:#38bdf8}.c{color:#f1f5f9;font-weight:600}.o{color:#94a3b8}.ok{color:#4ade80}.dim{color:#475569}
+  .foot{display:flex;gap:40px;margin-top:30px;font-size:18px;color:#cbd5e1}
+  .foot b{color:#fff}
+  .pill{display:inline-block;background:#0c4a6e;color:#7dd3fc;font-size:15px;padding:4px 13px;
+    border-radius:999px;margin-left:14px;vertical-align:middle;font-weight:600}
+</style></head>
+<body><div class="wrap">
+  <h1>agent-browser&nbsp;connect <span class="pill">local · no token · no remote</span></h1>
+  <p class="tag">Let your own <span class="accent">agent-browser</span> CLI drive the Chrome you're already logged into.</p>
+  <div class="term">
+    <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="bartitle">zsh — agent-browser</span></div>
+<pre><span class="p">$</span> <span class="c">agent-browser extension install</span>
+<span class="ok">✓</span> <span class="o">native-messaging host installed (com.agent_browser.connect)</span>
+<span class="ok">✓</span> <span class="o">extension ready — add it from the Chrome Web Store</span>
+
+<span class="p">$</span> <span class="c">agent-browser open</span> <span class="o">"https://mail.google.com"</span>   <span class="dim"># your logged-in tab</span>
+<span class="p">$</span> <span class="c">agent-browser snapshot -i</span>                    <span class="dim"># read the page</span>
+<span class="p">$</span> <span class="c">agent-browser click</span> <span class="o">@e42</span>                      <span class="dim"># act on it</span>
+<span class="ok">✓</span> <span class="o">driving your real session — no re-login, no confirmation</span>
+</pre>
+  </div>
+  <div class="foot">
+    <span>🔌 <b>Native messaging</b> — local only</span>
+    <span>🧩 <b>chrome.debugger</b> — on your command</span>
+    <span>🔓 <b>Open source</b> · Apache-2.0</span>
+  </div>
+</div></body></html>
