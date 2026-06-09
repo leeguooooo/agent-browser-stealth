@@ -399,9 +399,14 @@ pub fn run_nm_host() {
 
 async fn nm_host_main() {
     use crate::native::relay::{RelayOut, RelayState};
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::sync::{broadcast, mpsc, Mutex};
+    use tokio::sync::{mpsc, Mutex};
+
+    /// client_id -> unbounded sender feeding that client's ws writer.
+    type ClientMap = Arc<Mutex<HashMap<u64, mpsc::UnboundedSender<String>>>>;
 
     nm_log(&format!(
         "[nm-host] start argv={:?}",
@@ -432,7 +437,8 @@ async fn nm_host_main() {
     nm_log(&format!("[nm-host] cdp endpoint {url}"));
 
     let state = Arc::new(Mutex::new(RelayState::new()));
-    let (to_clients, _) = broadcast::channel::<String>(4096);
+    let clients: ClientMap = Arc::new(Mutex::new(HashMap::new()));
+    let next_client_id = Arc::new(AtomicU64::new(1));
     let (to_ext, mut to_ext_rx) = mpsc::channel::<Vec<u8>>(4096);
 
     // Single writer to Chrome (extension) over stdout, native-messaging framed.
@@ -450,7 +456,8 @@ async fn nm_host_main() {
     // Accept agent-browser CDP clients on the guid-scoped ws endpoint.
     {
         let state = state.clone();
-        let to_clients = to_clients.clone();
+        let clients = clients.clone();
+        let next_client_id = next_client_id.clone();
         let to_ext = to_ext.clone();
         let guid = guid.clone();
         tokio::spawn(async move {
@@ -460,11 +467,14 @@ async fn nm_host_main() {
                     Err(_) => break,
                 };
                 let st = state.clone();
-                let rx = to_clients.subscribe();
+                let client_id = next_client_id.fetch_add(1, Ordering::Relaxed);
+                let (ctx, crx) = mpsc::unbounded_channel::<String>();
+                clients.lock().await.insert(client_id, ctx);
                 let tx = to_ext.clone();
                 let g = guid.clone();
+                let cls = clients.clone();
                 tokio::spawn(async move {
-                    handle_cdp_client(stream, g, st, rx, tx).await;
+                    handle_cdp_client(stream, g, st, client_id, crx, tx, cls).await;
                 });
             }
         });
@@ -492,8 +502,23 @@ async fn nm_host_main() {
         };
         for o in outs {
             match o {
-                RelayOut::ToClient(m) => {
-                    let _ = to_clients.send(m.to_string());
+                RelayOut::ToClient { to, msg } => {
+                    let text = msg.to_string();
+                    let cls = clients.lock().await;
+                    match to {
+                        // Command reply → only the client that issued it.
+                        Some(cid) => {
+                            if let Some(tx) = cls.get(&cid) {
+                                let _ = tx.send(text);
+                            }
+                        }
+                        // CDP event → fan out to every connected client.
+                        None => {
+                            for tx in cls.values() {
+                                let _ = tx.send(text.clone());
+                            }
+                        }
+                    }
                 }
                 RelayOut::ToExt(m) => {
                     let _ = to_ext.send(m.to_string().into_bytes()).await;
@@ -505,16 +530,20 @@ async fn nm_host_main() {
     let _ = std::fs::remove_file(relay_url_path());
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_cdp_client(
     stream: tokio::net::TcpStream,
     guid: String,
     state: std::sync::Arc<tokio::sync::Mutex<crate::native::relay::RelayState>>,
-    mut from_relay: tokio::sync::broadcast::Receiver<String>,
+    client_id: u64,
+    mut from_relay: tokio::sync::mpsc::UnboundedReceiver<String>,
     to_ext: tokio::sync::mpsc::Sender<Vec<u8>>,
+    clients: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::UnboundedSender<String>>>,
+    >,
 ) {
     use crate::native::relay::ClientRoute;
     use futures_util::{SinkExt, StreamExt};
-    use tokio::sync::broadcast::error::RecvError;
     use tokio_tungstenite::tungstenite::Message;
 
     let want_path = format!("/{guid}");
@@ -542,9 +571,8 @@ async fn handle_cdp_client(
     loop {
         tokio::select! {
             relayed = from_relay.recv() => match relayed {
-                Ok(text) => { if tx.send(Message::Text(text)).await.is_err() { break } }
-                Err(RecvError::Lagged(_)) => continue,
-                Err(RecvError::Closed) => break,
+                Some(text) => { if tx.send(Message::Text(text)).await.is_err() { break } }
+                None => break,
             },
             incoming = rx.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
@@ -552,7 +580,7 @@ async fn handle_cdp_client(
                         Ok(v) => v,
                         Err(_) => continue,
                     };
-                    let route = { state.lock().await.route_client_command(&v) };
+                    let route = { state.lock().await.route_client_command(client_id, &v) };
                     match route {
                         ClientRoute::Local(reply) => {
                             if tx.send(Message::Text(reply.to_string())).await.is_err() { break }
@@ -567,5 +595,8 @@ async fn handle_cdp_client(
             },
         }
     }
+    // Unregister and forget this client's in-flight commands.
+    clients.lock().await.remove(&client_id);
+    state.lock().await.drop_client(client_id);
     nm_log("[nm-host] cdp client disconnected");
 }

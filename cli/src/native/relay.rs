@@ -10,6 +10,17 @@
 //! extension as `forwardCDPCommand`. That keeps `CdpClient` and `browser.rs`
 //! unchanged.
 //!
+//! ## Multiple clients (concurrent agents on one shared browser)
+//!
+//! Several agent-browser daemons (one per `--session`) can connect to the same
+//! relay/Chrome at once. The extension is a single peer, so the relay must
+//! demultiplex: every forwarded command is re-keyed to a relay-global id mapped
+//! back to the originating client, and the extension's reply is routed to **only
+//! that client** (with its original id restored). Command ids from different
+//! clients therefore never collide, and one client never sees another's command
+//! replies. CDP *events* (no id) fan out to all clients, which ignore events for
+//! sessions they didn't attach.
+//!
 //! This module is the pure translation core (no I/O) so the protocol can be
 //! unit-tested; the tokio WebSocket server that drives it lives alongside.
 
@@ -20,6 +31,9 @@ use serde_json::{json, Value};
 /// Protocol version advertised in the connect handshake (matches the extension).
 pub const RELAY_PROTOCOL: i64 = 3;
 
+/// Identifies one connected CDP client (agent-browser daemon) for routing.
+pub type ClientId = u64;
+
 /// One target (tab) the extension has attached, as the relay tracks it.
 #[derive(Clone)]
 struct TargetEntry {
@@ -27,27 +41,36 @@ struct TargetEntry {
     target_info: Value,
 }
 
-/// Relay translation state: the set of targets the extension currently exposes.
+/// Relay translation state: the targets the extension exposes, plus the
+/// in-flight command map used to route extension replies back to the right
+/// client.
 #[derive(Default)]
 pub struct RelayState {
     /// targetId -> entry
     targets: HashMap<String, TargetEntry>,
+    /// relay-global command id -> (client that sent it, its original id)
+    pending: HashMap<i64, (ClientId, Value)>,
+    /// monotonic source of relay-global command ids
+    next_global_id: i64,
 }
 
-/// What to do with a raw CDP command received from the `CdpClient`.
+/// What to do with a raw CDP command received from a `CdpClient`.
 #[derive(Debug, PartialEq)]
 pub enum ClientRoute {
-    /// Answer locally; the value is a raw CDP response `{id, result}`.
+    /// Answer locally; the value is a raw CDP response `{id, result}` to send
+    /// back to the originating client only.
     Local(Value),
-    /// Forward to the extension; the value is a `forwardCDPCommand` envelope.
+    /// Forward to the extension; the value is a `forwardCDPCommand` envelope
+    /// already re-keyed to a relay-global id.
     Forward(Value),
 }
 
 /// An output the relay emits while handling an extension message.
 #[derive(Debug, PartialEq)]
 pub enum RelayOut {
-    /// Send this raw CDP message to the `CdpClient`.
-    ToClient(Value),
+    /// Send this raw CDP message to clients. `to = Some(id)` targets one client
+    /// (a command reply); `to = None` broadcasts (a CDP event).
+    ToClient { to: Option<ClientId>, msg: Value },
     /// Send this envelope message back to the extension.
     ToExt(Value),
 }
@@ -68,10 +91,16 @@ impl RelayState {
         json!({ "method": "ping" })
     }
 
-    /// Route a raw CDP command `{id, method, params?, sessionId?}` from the
+    /// Forget a disconnected client's in-flight commands so its orphaned
+    /// `pending` entries don't leak.
+    pub fn drop_client(&mut self, client_id: ClientId) {
+        self.pending.retain(|_, (cid, _)| *cid != client_id);
+    }
+
+    /// Route a raw CDP command `{id, method, params?, sessionId?}` from a
     /// `CdpClient`: answer browser-level `Target.*` discovery locally, forward
-    /// the rest to the extension.
-    pub fn route_client_command(&self, raw: &Value) -> ClientRoute {
+    /// the rest to the extension under a relay-global id keyed to `client_id`.
+    pub fn route_client_command(&mut self, client_id: ClientId, raw: &Value) -> ClientRoute {
         let id = raw.get("id").cloned().unwrap_or(Value::Null);
         let method = raw.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let params = raw.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -100,17 +129,23 @@ impl RelayState {
                     })),
                 }
             }
-            // Everything else goes to the extension's chrome.debugger.
-            _ => ClientRoute::Forward(json!({
-                "id": id,
-                "method": "forwardCDPCommand",
-                "params": { "method": method, "params": params, "sessionId": session_id },
-            })),
+            // Everything else goes to the extension's chrome.debugger. Re-key the
+            // id so this client's reply can be routed back unambiguously.
+            _ => {
+                self.next_global_id += 1;
+                let gid = self.next_global_id;
+                self.pending.insert(gid, (client_id, id));
+                ClientRoute::Forward(json!({
+                    "id": gid,
+                    "method": "forwardCDPCommand",
+                    "params": { "method": method, "params": params, "sessionId": session_id },
+                }))
+            }
         }
     }
 
     /// Handle one decoded message from the extension. Updates target state and
-    /// returns the messages to emit (to the client and/or back to the
+    /// returns the messages to emit (routed to a client and/or back to the
     /// extension). `expected_token` is matched against the connect handshake.
     pub fn handle_ext_message(&mut self, msg: &Value, expected_token: &str) -> Vec<RelayOut> {
         // Connect handshake request from the extension.
@@ -137,12 +172,20 @@ impl RelayState {
             return vec![];
         }
 
-        // Response to a forwardCDPCommand we sent → raw CDP response to client.
+        // Response to a forwardCDPCommand we sent → route the raw CDP response
+        // back to the client that issued it, with its original id restored.
         if msg.get("id").is_some()
             && (msg.get("result").is_some() || msg.get("error").is_some())
             && msg.get("method").is_none()
         {
-            let mut out = json!({ "id": msg.get("id").cloned().unwrap_or(Value::Null) });
+            let gid = msg.get("id").and_then(|i| i.as_i64());
+            let (to, orig_id) = match gid.and_then(|g| self.pending.remove(&g)) {
+                Some((client_id, orig)) => (Some(client_id), orig),
+                // No mapping (stale/unknown id) — fall back to broadcasting with
+                // whatever id the extension echoed.
+                None => (None, msg.get("id").cloned().unwrap_or(Value::Null)),
+            };
+            let mut out = json!({ "id": orig_id });
             if let Some(r) = msg.get("result") {
                 out["result"] = r.clone();
             }
@@ -153,7 +196,7 @@ impl RelayState {
                     other => other.clone(),
                 };
             }
-            return vec![RelayOut::ToClient(out)];
+            return vec![RelayOut::ToClient { to, msg: out }];
         }
 
         // CDP event forwarded from a tab.
@@ -194,12 +237,13 @@ impl RelayState {
                 _ => {}
             }
 
-            // Regular CDP event → deliver to the client with its sessionId.
+            // Regular CDP event → fan out to all clients (each filters by the
+            // sessions it attached to).
             let mut ev = json!({ "method": inner_method, "params": inner_params });
             if let Some(sid) = session_id {
                 ev["sessionId"] = json!(sid);
             }
-            return vec![RelayOut::ToClient(ev)];
+            return vec![RelayOut::ToClient { to: None, msg: ev }];
         }
 
         vec![]
@@ -247,7 +291,7 @@ mod tests {
         let out = s.handle_ext_message(&attached_event("T1", "cb-tab-1"), "tok");
         assert!(out.is_empty(), "attachedToTarget should be consumed, not forwarded");
         // Now getTargets must report it.
-        let route = s.route_client_command(&json!({ "id": 1, "method": "Target.getTargets" }));
+        let route = s.route_client_command(1, &json!({ "id": 1, "method": "Target.getTargets" }));
         match route {
             ClientRoute::Local(v) => {
                 let infos = v["result"]["targetInfos"].as_array().unwrap();
@@ -263,6 +307,7 @@ mod tests {
         let mut s = RelayState::new();
         s.seed_target("T1", "cb-tab-1");
         let route = s.route_client_command(
+            7,
             &json!({ "id": 5, "method": "Target.attachToTarget", "params": { "targetId": "T1", "flatten": true } }),
         );
         assert_eq!(
@@ -273,8 +318,9 @@ mod tests {
 
     #[test]
     fn attach_to_unknown_target_errors_locally() {
-        let s = RelayState::new();
+        let mut s = RelayState::new();
         let route = s.route_client_command(
+            1,
             &json!({ "id": 6, "method": "Target.attachToTarget", "params": { "targetId": "nope" } }),
         );
         match route {
@@ -284,16 +330,17 @@ mod tests {
     }
 
     #[test]
-    fn other_commands_forward_as_envelope() {
-        let s = RelayState::new();
-        let route = s.route_client_command(&json!({
-            "id": 9, "method": "Page.navigate",
-            "params": { "url": "https://x" }, "sessionId": "cb-tab-1"
-        }));
+    fn other_commands_forward_under_global_id() {
+        let mut s = RelayState::new();
+        let route = s.route_client_command(
+            42,
+            &json!({ "id": 9, "method": "Page.navigate", "params": { "url": "https://x" }, "sessionId": "cb-tab-1" }),
+        );
         match route {
             ClientRoute::Forward(v) => {
                 assert_eq!(v["method"], "forwardCDPCommand");
-                assert_eq!(v["id"], 9);
+                // id is re-keyed to a relay-global id (not the client's 9).
+                assert_eq!(v["id"], 1);
                 assert_eq!(v["params"]["method"], "Page.navigate");
                 assert_eq!(v["params"]["sessionId"], "cb-tab-1");
                 assert_eq!(v["params"]["params"]["url"], "https://x");
@@ -303,30 +350,62 @@ mod tests {
     }
 
     #[test]
-    fn forward_command_response_becomes_client_response() {
+    fn reply_routes_back_to_the_issuing_client_with_original_id() {
         let mut s = RelayState::new();
-        let out = s.handle_ext_message(&json!({ "id": 9, "result": { "frameId": "F1" } }), "tok");
+        // Two clients each send a command that happens to share original id 1.
+        let r1 = s.route_client_command(100, &json!({ "id": 1, "method": "Page.navigate", "params": {} }));
+        let r2 = s.route_client_command(200, &json!({ "id": 1, "method": "Page.reload", "params": {} }));
+        let g1 = match r1 {
+            ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
+            _ => panic!(),
+        };
+        let g2 = match r2 {
+            ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
+            _ => panic!(),
+        };
+        assert_ne!(g1, g2, "global ids must be distinct across clients");
+
+        // Extension replies for g2 → must go to client 200 with original id 1.
+        let out = s.handle_ext_message(&json!({ "id": g2, "result": { "ok": true } }), "tok");
         assert_eq!(
             out,
-            vec![RelayOut::ToClient(json!({ "id": 9, "result": { "frameId": "F1" } }))]
+            vec![RelayOut::ToClient {
+                to: Some(200),
+                msg: json!({ "id": 1, "result": { "ok": true } })
+            }]
+        );
+        // And g1 → client 100.
+        let out = s.handle_ext_message(&json!({ "id": g1, "result": { "ok": false } }), "tok");
+        assert_eq!(
+            out,
+            vec![RelayOut::ToClient {
+                to: Some(100),
+                msg: json!({ "id": 1, "result": { "ok": false } })
+            }]
         );
     }
 
     #[test]
-    fn forward_command_error_is_wrapped() {
+    fn forward_command_error_is_wrapped_and_routed() {
         let mut s = RelayState::new();
-        let out = s.handle_ext_message(&json!({ "id": 9, "error": "boom" }), "tok");
+        let r = s.route_client_command(5, &json!({ "id": 3, "method": "Page.navigate", "params": {} }));
+        let gid = match r {
+            ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
+            _ => panic!(),
+        };
+        let out = s.handle_ext_message(&json!({ "id": gid, "error": "boom" }), "tok");
         match &out[0] {
-            RelayOut::ToClient(v) => {
-                assert_eq!(v["id"], 9);
-                assert_eq!(v["error"]["message"], "boom");
+            RelayOut::ToClient { to, msg } => {
+                assert_eq!(*to, Some(5));
+                assert_eq!(msg["id"], 3);
+                assert_eq!(msg["error"]["message"], "boom");
             }
             _ => panic!("expected ToClient"),
         }
     }
 
     #[test]
-    fn regular_event_is_forwarded_with_session() {
+    fn regular_event_broadcasts_with_session() {
         let mut s = RelayState::new();
         let ev = json!({
             "method": "forwardCDPEvent",
@@ -335,12 +414,32 @@ mod tests {
         let out = s.handle_ext_message(&ev, "tok");
         assert_eq!(
             out,
-            vec![RelayOut::ToClient(json!({
-                "method": "Page.loadEventFired",
-                "params": { "timestamp": 1.0 },
-                "sessionId": "cb-tab-1"
-            }))]
+            vec![RelayOut::ToClient {
+                to: None,
+                msg: json!({
+                    "method": "Page.loadEventFired",
+                    "params": { "timestamp": 1.0 },
+                    "sessionId": "cb-tab-1"
+                })
+            }]
         );
+    }
+
+    #[test]
+    fn drop_client_clears_its_pending() {
+        let mut s = RelayState::new();
+        let r = s.route_client_command(9, &json!({ "id": 1, "method": "Page.navigate", "params": {} }));
+        let gid = match r {
+            ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
+            _ => panic!(),
+        };
+        s.drop_client(9);
+        // Reply now has no mapping → broadcast fallback (to: None), echoed id.
+        let out = s.handle_ext_message(&json!({ "id": gid, "result": {} }), "tok");
+        match &out[0] {
+            RelayOut::ToClient { to, .. } => assert_eq!(*to, None),
+            _ => panic!(),
+        }
     }
 
     #[test]
