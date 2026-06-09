@@ -106,7 +106,13 @@ pub struct TargetInfo {
     pub target_id: String,
     #[serde(rename = "type")]
     pub target_type: String,
+    // Tolerate minimal targetInfo: the ab-connect relay's synthesized
+    // Target.attachedToTarget (re-announce path) omits title/url, and real CDP
+    // occasionally omits them too. Default to empty rather than fail the whole
+    // Target.getTargets deserialize.
+    #[serde(default)]
     pub title: String,
+    #[serde(default)]
     pub url: String,
     pub attached: Option<bool>,
     pub browser_context_id: Option<String>,
