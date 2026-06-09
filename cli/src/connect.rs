@@ -20,8 +20,24 @@ use std::path::PathBuf;
 pub const HOST_NAME: &str = "com.agent_browser.connect";
 
 /// Stable id of the `ab-connect` extension, pinned by the `key` in its
-/// manifest.json. Chrome only lets that extension talk to this host.
-pub const EXTENSION_ID: &str = "bdoiejojpjogcjojeladhioioijhgade";
+/// manifest.json (and the signing key of the published `.crx`). Chrome only lets
+/// that extension talk to this host, and the force-install policy references it.
+pub const EXTENSION_ID: &str = "ciiljdlhdpfckdcfkphgmfalanpdejep";
+
+/// Omaha/gupdate update manifest for the signed `ab-connect.crx`. The macOS
+/// configuration profile force-installs the extension from here, so no
+/// `chrome://extensions` "Load unpacked" GUI step is ever needed. Chrome 142+
+/// removed `--load-extension`, and macOS has blocked local-`.crx` external
+/// installs since Chrome 44 — a policy `update_url` is the only GUI-free path
+/// left into the real, logged-in profile.
+pub const UPDATE_URL: &str =
+    "https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/extensions/updates.xml";
+
+/// Stable identifiers for the generated Chrome configuration profile, so a
+/// re-install replaces (rather than duplicates) it in System Settings.
+const PROFILE_ID: &str = "work.pwtk.agent-browser.ab-connect";
+const PROFILE_UUID: &str = "A1B2C3D4-AB00-4CCE-9E10-AAAABBBBCCCC";
+const PROFILE_PAYLOAD_UUID: &str = "A1B2C3D4-AB01-4CCE-9E10-DDDDEEEEFFFF";
 
 /// `agent-browser extension <install|uninstall|status>` (local; no daemon).
 /// `args` is the cleaned argv including the leading "extension".
@@ -31,18 +47,40 @@ pub fn run_connect(args: &[String], json: bool) {
 
     if uninstall {
         let removed = remove_host_manifests();
-        report(json, true, &format!("removed {removed} native-host manifest(s)"));
+        let profile_removed = remove_force_install_profile();
+        if json {
+            report(json, true, &format!("removed {removed} native-host manifest(s)"));
+        } else {
+            println!("✓ removed {removed} native-host manifest(s).");
+            if profile_removed {
+                println!("✓ removed ~/.agent-browser/ab-connect.mobileconfig");
+            }
+            if cfg!(target_os = "macos") {
+                println!(
+                    "  To fully remove the extension, delete the \"agent-browser connect\" profile\n\
+                     in System Settings → Profiles (or run: profiles remove -identifier {PROFILE_ID})."
+                );
+            }
+        }
         return;
     }
     if install {
+        let no_open = args.iter().any(|a| a == "--no-open");
         match install_native_host() {
             Ok(paths) => {
+                let profile = install_force_install_profile(no_open);
                 if json {
                     println!(
                         "{}",
                         serde_json::to_string(&serde_json::json!({
                             "success": true,
-                            "data": { "installed": paths, "extensionId": EXTENSION_ID }
+                            "data": {
+                                "installed": paths,
+                                "extensionId": EXTENSION_ID,
+                                "profile": profile.as_ref().ok().map(|p| p.display().to_string()),
+                                "profileError": profile.as_ref().err(),
+                                "updateUrl": UPDATE_URL,
+                            }
                         }))
                         .unwrap_or_default()
                     );
@@ -51,11 +89,27 @@ pub fn run_connect(args: &[String], json: bool) {
                     for p in &paths {
                         println!("  {p}");
                     }
-                    println!(
-                        "\nNext: load the ab-connect extension in Chrome (chrome://extensions →\n\
-                         Developer mode → Load unpacked → extensions/ab-connect), then this host\n\
-                         is reachable with no token and no per-use confirmation."
-                    );
+                    match profile {
+                        Ok(path) => {
+                            println!("\n✓ Chrome force-install profile written:\n  {}", path.display());
+                            if cfg!(target_os = "macos") {
+                                println!(
+                                    "\nOne-time step (no file dialog, ever): approve the profile, then restart Chrome.\n\
+                                     System Settings → General → Device Management (or Privacy & Security →\n\
+                                     Profiles) → double-click \"agent-browser connect\" → Install.\n\
+                                     After approval Chrome force-installs the extension on next launch and\n\
+                                     keeps it up to date — no token, no per-use confirmation."
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            println!("\n! could not write the force-install profile: {e}");
+                            println!(
+                                "  Fallback: load extensions/ab-connect via chrome://extensions →\n\
+                                 Developer mode → Load unpacked."
+                            );
+                        }
+                    }
                 }
             }
             Err(e) => report(json, false, &format!("install failed: {e}")),
@@ -134,6 +188,78 @@ fn install_native_host() -> Result<Vec<String>, String> {
         return Err("no Chrome/Chromium NativeMessagingHosts directory found".into());
     }
     Ok(written)
+}
+
+/// Write a Chrome configuration profile that force-installs `ab-connect` from
+/// [`UPDATE_URL`], and (unless `no_open`) `open` it so the user approves it once
+/// in System Settings. Returns the profile path. macOS only — elsewhere it
+/// returns an error and the caller prints the manual fallback.
+fn install_force_install_profile(no_open: bool) -> Result<PathBuf, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("force-install profile is macOS-only; on Linux set Chrome's \
+                    ExtensionInstallForcelist policy JSON, or Load unpacked from chrome://extensions"
+            .into());
+    }
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ab_dir = home.join(".agent-browser");
+    std::fs::create_dir_all(&ab_dir).map_err(|e| e.to_string())?;
+    let path = ab_dir.join("ab-connect.mobileconfig");
+    std::fs::write(&path, force_install_mobileconfig()).map_err(|e| e.to_string())?;
+    if !no_open {
+        // `open` queues the profile in System Settings for one-time approval.
+        let _ = std::process::Command::new("open").arg(&path).status();
+    }
+    Ok(path)
+}
+
+/// The `.mobileconfig` payload: a user-scope Chrome policy that force-installs
+/// the extension by id from our hosted update manifest. User scope installs
+/// without admin — just a one-time approval click.
+fn force_install_mobileconfig() -> String {
+    let forcelist = format!("{EXTENSION_ID};{UPDATE_URL}");
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key><string>com.google.Chrome</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>PayloadIdentifier</key><string>{PROFILE_ID}.chrome</string>
+      <key>PayloadUUID</key><string>{PROFILE_PAYLOAD_UUID}</string>
+      <key>PayloadEnabled</key><true/>
+      <key>PayloadDisplayName</key><string>agent-browser connect (Chrome)</string>
+      <key>ExtensionInstallForcelist</key>
+      <array>
+        <string>{forcelist}</string>
+      </array>
+    </dict>
+  </array>
+  <key>PayloadType</key><string>Configuration</string>
+  <key>PayloadVersion</key><integer>1</integer>
+  <key>PayloadIdentifier</key><string>{PROFILE_ID}</string>
+  <key>PayloadUUID</key><string>{PROFILE_UUID}</string>
+  <key>PayloadDisplayName</key><string>agent-browser connect</string>
+  <key>PayloadDescription</key><string>Force-installs the agent-browser connect extension so agent-browser can drive your logged-in Chrome. No token, no per-use confirmation.</string>
+  <key>PayloadOrganization</key><string>agent-browser-stealth</string>
+  <key>PayloadScope</key><string>User</string>
+  <key>PayloadRemovalDisallowed</key><false/>
+</dict>
+</plist>
+"#
+    )
+}
+
+/// Remove the generated `.mobileconfig` file (the profile itself is removed by
+/// the user from System Settings, or via `profiles remove`).
+fn remove_force_install_profile() -> bool {
+    dirs::home_dir()
+        .map(|h| h.join(".agent-browser").join("ab-connect.mobileconfig"))
+        .filter(|p| p.exists())
+        .map(|p| std::fs::remove_file(&p).is_ok())
+        .unwrap_or(false)
 }
 
 fn remove_host_manifests() -> usize {

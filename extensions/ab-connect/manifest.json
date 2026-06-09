@@ -1,16 +1,28 @@
 {
   "manifest_version": 3,
   "name": "agent-browser connect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Let agent-browser drive your logged-in Chrome — install once, no token, no per-use confirmation.",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvPGcSmMx7dSfq9gRBDbQuAgx/+TEavrDxP/4jLa2+Ycexf/FEmq1MN8gAHoTRjSyp66YKD+1qI1CF6bk0rH5ZtxpRO7DYRTUPcsA1IpHbgEn5mppx3YxNGZilfkEZyrxdhBqUIzq3J74+/kpZzEVsO+DQTbAZSsFfdUkoCb5mbJid2VQYeqeBnYGAhbpGvN1P99jdT9EA1nKINb3ji6tLobCpyQ1fjf2uWm4mUirWkkF/nbUFVFEAh33Q/IYZmtUHgDYea5LsM9xH4KAG2kxMvFGj6vHR39sZd5/+gnvwScTcItUWQ9lFIyWYiwrSB25Lu0FshfllevXUFrG5vrvRwIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6vQIyscGIPYPZdSpPwPL0+0gxUROyRgCpmvCSDoc8XUm4qm97VbKnD9Ijc1lV22lNWZtE78gaRjt6BeSfuMgnBymnhLKjN1gU6AI5QUU0mrJyeHdWKvrKQR5FmsM2A7Xr1ykE2SiiS8zNUS3Y/6O5l+Nva7wrVy6E4a2dkBVQkOsu+DV+nEZvhIyuDY5D5SPXqNwUTWTaglwj5mjvHz36xSwCWlPmrtJ+ED0AUyrb2z4GIOmvk4kqtBVrh/UD058klLo4CkYOnIybB5aV6WYuwarfPY4bF/dLggPem+ewLNTUNBuwrxj/A4nUv0LJTuRO8rR7f8WR9qnRCY0Ic5saQIDAQAB",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["debugger", "tabs", "nativeMessaging", "storage", "alarms", "webNavigation"],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "agent-browser connect" }
+  "permissions": [
+    "debugger",
+    "tabs",
+    "nativeMessaging",
+    "storage",
+    "alarms",
+    "webNavigation"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "agent-browser connect"
+  }
 }
