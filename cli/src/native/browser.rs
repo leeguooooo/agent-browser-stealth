@@ -12,6 +12,11 @@ use super::cdp::lightpanda::{launch_lightpanda, LightpandaLaunchOptions, Lightpa
 use super::cdp::types::*;
 use super::element::{resolve_element_object_id, RefMap};
 
+/// The daemon's session name, set once at daemon start. Names the Chrome tab
+/// group that abs-created tabs land in when driving the user's real Chrome via
+/// the `ab-connect` extension, so each agent/session gets its own group.
+pub static DAEMON_SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 // ---------------------------------------------------------------------------
 // Launch validation
 // ---------------------------------------------------------------------------
@@ -568,12 +573,14 @@ impl BrowserManager {
 
         if page_targets.is_empty() {
             // Create a new tab
+            let agent_group = self.agent_group();
             let result: CreateTargetResult = self
                 .client
                 .send_command_typed(
                     "Target.createTarget",
                     &CreateTargetParams {
                         url: "about:blank".to_string(),
+                        agent_group,
                     },
                     None,
                 )
@@ -958,12 +965,14 @@ impl BrowserManager {
             return Ok(());
         }
 
+        let agent_group = self.agent_group();
         let result: CreateTargetResult = self
             .client
             .send_command_typed(
                 "Target.createTarget",
                 &CreateTargetParams {
                     url: "about:blank".to_string(),
+                    agent_group,
                 },
                 None,
             )
@@ -1072,6 +1081,27 @@ impl BrowserManager {
         self.pages.iter().any(|p| p.label.as_deref() == Some(label))
     }
 
+    /// Chrome tab-group name for tabs this manager creates, or `None` when not
+    /// driving the user's real Chrome via the `ab-connect` extension relay.
+    ///
+    /// Grouping only makes sense on the shared real browser (one Chrome, many
+    /// agents): each session's tabs go into its own group. On a launched / direct
+    /// CDP browser the endpoint is strict, so we must NOT send the custom param —
+    /// hence `None` there. We detect the relay by matching our `ws_url` against
+    /// the live relay URL the native-messaging host published.
+    fn agent_group(&self) -> Option<String> {
+        let via_relay = crate::connect::relay_url().as_deref() == Some(self.ws_url.as_str());
+        if !via_relay {
+            return None;
+        }
+        let name = DAEMON_SESSION.get().map(String::as_str).unwrap_or("default");
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+
     pub async fn tab_new(
         &mut self,
         url: Option<&str>,
@@ -1096,12 +1126,14 @@ impl BrowserManager {
 
         let target_url = url.unwrap_or("about:blank");
 
+        let agent_group = self.agent_group();
         let result: CreateTargetResult = self
             .client
             .send_command_typed(
                 "Target.createTarget",
                 &CreateTargetParams {
                     url: target_url.to_string(),
+                    agent_group,
                 },
                 None,
             )

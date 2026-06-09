@@ -17,6 +17,10 @@ use super::state;
 use super::stream::StreamServer;
 
 pub async fn run_daemon(session: &str) {
+    // Record this daemon's session so tabs it opens on the shared real Chrome
+    // (via the ab-connect extension) land in a per-session Chrome tab group.
+    let _ = super::browser::DAEMON_SESSION.set(session.to_string());
+
     let socket_dir = get_daemon_socket_dir();
     if !socket_dir.exists() {
         let _ = fs::create_dir_all(&socket_dir);

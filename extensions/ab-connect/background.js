@@ -28,6 +28,46 @@ const tabs = new Map()
 const sessionToTab = new Map()
 /** child (OOPIF/worker) sessionId -> tabId */
 const childSessionToTab = new Map()
+/** tab-group name -> chrome tabGroups id (best-effort cache) */
+const groupIdByName = new Map()
+
+// Deterministic color per group name so a given session keeps the same color.
+const GROUP_COLORS = ['blue', 'cyan', 'green', 'yellow', 'orange', 'red', 'pink', 'purple', 'grey']
+function colorForName(name) {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return GROUP_COLORS[h % GROUP_COLORS.length]
+}
+
+// Put a freshly-created tab into the agent/session's own Chrome tab group, so
+// each agent's tabs are visually separated (from each other and from the user's
+// own tabs) on the shared real browser. Best-effort: grouping failures never
+// break tab creation.
+async function groupTabInto(tabId, name) {
+  if (!name || !chrome.tabGroups || !chrome.tabs.group) return
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  if (!tab) return
+  let gid = groupIdByName.get(name)
+  if (gid != null) {
+    const ok = await chrome.tabGroups.get(gid).then(() => true).catch(() => false)
+    if (!ok) {
+      gid = null
+      groupIdByName.delete(name)
+    }
+  }
+  if (gid == null) {
+    // Reuse a same-titled group already in this window (survives SW restarts).
+    const found = await chrome.tabGroups.query({ windowId: tab.windowId, title: name }).catch(() => [])
+    if (found && found[0]) gid = found[0].id
+  }
+  if (gid == null) {
+    gid = await chrome.tabs.group({ tabIds: tabId })
+    await chrome.tabGroups.update(gid, { title: name, color: colorForName(name) }).catch(() => {})
+  } else {
+    await chrome.tabs.group({ groupId: gid, tabIds: tabId }).catch(() => {})
+  }
+  groupIdByName.set(name, gid)
+}
 
 function postToHost(msg) {
   try {
@@ -121,6 +161,13 @@ async function handleForwardCdpCommand(msg) {
     if (!tab.id) throw new Error('createTarget: no tab id')
     await new Promise((r) => setTimeout(r, 100))
     const t = await attachTab(tab.id)
+    // Per-session tab grouping (non-CDP hint from the daemon). Best-effort.
+    const group = typeof params?.agentGroup === 'string' ? params.agentGroup.trim() : ''
+    if (group) {
+      try {
+        await groupTabInto(tab.id, group)
+      } catch {}
+    }
     return { targetId: t.targetId }
   }
   if (method === 'Target.closeTarget') {

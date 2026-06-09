@@ -141,6 +141,12 @@ pub struct SetDiscoverTargetsParams {
 #[serde(rename_all = "camelCase")]
 pub struct CreateTargetParams {
     pub url: String,
+    /// Non-CDP hint consumed only by the `ab-connect` extension: the Chrome
+    /// tab-group name to drop the new tab into (per-session grouping on the
+    /// shared real Chrome). `None` on the normal CDP path so a strict real-Chrome
+    /// endpoint never receives an unknown parameter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_group: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
