@@ -12,7 +12,7 @@
 //! This step wires the transport end-to-end (Chrome ⇄ host). Bridging the host
 //! to the daemon's relay + CdpClient is layered on next.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 /// Native-messaging host name; must match `HOST_NAME` in the extension and the
@@ -208,82 +208,216 @@ fn report(json: bool, ok: bool, msg: &str) {
 
 // ---- native messaging host (`__nm-host`) ----------------------------------
 
-/// Read one native-messaging frame from stdin: 4-byte native-endian length,
-/// then that many bytes of UTF-8 JSON. Returns `None` on clean EOF.
-fn read_frame(stdin: &mut impl Read) -> std::io::Result<Option<Vec<u8>>> {
-    let mut len_buf = [0u8; 4];
-    match stdin.read_exact(&mut len_buf) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
+fn nm_log(line: &str) {
+    let path = dirs::home_dir()
+        .map(|h| h.join(".agent-browser").join("nm-host.log"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/ab-nm-host.log"));
+    if let Some(p) = path.parent() {
+        let _ = std::fs::create_dir_all(p);
     }
-    let len = u32::from_ne_bytes(len_buf) as usize;
-    let mut buf = vec![0u8; len];
-    stdin.read_exact(&mut buf)?;
-    Ok(Some(buf))
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
-/// Write one native-messaging frame to stdout.
-fn write_frame(stdout: &mut impl Write, payload: &[u8]) -> std::io::Result<()> {
-    let len = payload.len() as u32;
-    stdout.write_all(&len.to_ne_bytes())?;
-    stdout.write_all(payload)?;
-    stdout.flush()
+fn random_guid() -> String {
+    let mut b = [0u8; 16];
+    let _ = getrandom::getrandom(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Where the daemon/CLI reads the relay's CDP WebSocket URL (perms 600).
+fn relay_url_path() -> PathBuf {
+    dirs::home_dir()
+        .map(|h| h.join(".agent-browser").join("relay-cdp-url"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/ab-relay-cdp-url"))
 }
 
 /// Hidden `__nm-host` mode: launched by Chrome for the ab-connect extension.
 ///
-/// Step 1 (this commit): speak the framing correctly and log what the extension
-/// sends to `~/.agent-browser/nm-host.log`, replying `pong` to `ping`. The next
-/// step bridges these frames to the daemon's relay + CdpClient.
+/// Bridges the extension (native-messaging stdio, envelope protocol) to a local
+/// **CDP WebSocket endpoint** that agent-browser connects to like any Chrome.
+/// `relay::RelayState` translates envelope ⇄ raw CDP and emulates browser-level
+/// Target discovery. The ws URL carries an unguessable guid (written to a 600
+/// file) so only this user's agent-browser — not arbitrary local processes —
+/// can drive the browser. No token, no user interaction.
 pub fn run_nm_host() {
-    let log_path = dirs::home_dir()
-        .map(|h| h.join(".agent-browser").join("nm-host.log"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/ab-nm-host.log"));
-    if let Some(p) = log_path.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let mut log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .ok();
-    let mut logln = |s: &str| {
-        if let Some(f) = log.as_mut() {
-            let _ = writeln!(f, "{s}");
-            let _ = f.flush();
+    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(rt) => rt,
+        Err(e) => {
+            nm_log(&format!("[nm-host] runtime build failed: {e}"));
+            return;
         }
     };
-    logln(&format!(
-        "[nm-host] started argv={:?}",
+    rt.block_on(nm_host_main());
+}
+
+async fn nm_host_main() {
+    use crate::native::relay::{RelayOut, RelayState};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::{broadcast, mpsc, Mutex};
+
+    nm_log(&format!(
+        "[nm-host] start argv={:?}",
         std::env::args().skip(1).collect::<Vec<_>>()
     ));
 
-    let mut stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-    let mut count = 0usize;
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(l) => l,
+        Err(e) => {
+            nm_log(&format!("[nm-host] bind failed: {e}"));
+            return;
+        }
+    };
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    let guid = random_guid();
+    let url = format!("ws://127.0.0.1:{port}/{guid}");
+    let url_path = relay_url_path();
+    if let Some(p) = url_path.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    if std::fs::write(&url_path, &url).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&url_path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    nm_log(&format!("[nm-host] cdp endpoint {url}"));
+
+    let state = Arc::new(Mutex::new(RelayState::new()));
+    let (to_clients, _) = broadcast::channel::<String>(4096);
+    let (to_ext, mut to_ext_rx) = mpsc::channel::<Vec<u8>>(4096);
+
+    // Single writer to Chrome (extension) over stdout, native-messaging framed.
+    tokio::spawn(async move {
+        let mut out = tokio::io::stdout();
+        while let Some(frame) = to_ext_rx.recv().await {
+            let len = (frame.len() as u32).to_ne_bytes();
+            if out.write_all(&len).await.is_err() || out.write_all(&frame).await.is_err() {
+                break;
+            }
+            let _ = out.flush().await;
+        }
+    });
+
+    // Accept agent-browser CDP clients on the guid-scoped ws endpoint.
+    {
+        let state = state.clone();
+        let to_clients = to_clients.clone();
+        let to_ext = to_ext.clone();
+        let guid = guid.clone();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                let st = state.clone();
+                let rx = to_clients.subscribe();
+                let tx = to_ext.clone();
+                let g = guid.clone();
+                tokio::spawn(async move {
+                    handle_cdp_client(stream, g, st, rx, tx).await;
+                });
+            }
+        });
+    }
+
+    // Extension → host frames.
+    let mut stdin = tokio::io::stdin();
     loop {
-        match read_frame(&mut stdin) {
-            Ok(Some(bytes)) => {
-                count += 1;
-                let text = String::from_utf8_lossy(&bytes);
-                // Log a compact summary (method + sizes) without flooding.
-                let summary: String = text.chars().take(300).collect();
-                logln(&format!("[nm-host] recv #{count} ({} bytes): {summary}", bytes.len()));
-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    if v.get("method").and_then(|m| m.as_str()) == Some("ping") {
-                        let _ = write_frame(&mut stdout, br#"{"method":"pong"}"#);
-                    }
+        let mut len_buf = [0u8; 4];
+        if stdin.read_exact(&mut len_buf).await.is_err() {
+            break;
+        }
+        let len = u32::from_ne_bytes(len_buf) as usize;
+        let mut buf = vec![0u8; len];
+        if stdin.read_exact(&mut buf).await.is_err() {
+            break;
+        }
+        let v: serde_json::Value = match serde_json::from_slice(&buf) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let outs = {
+            let mut s = state.lock().await;
+            s.handle_ext_message(&v, "")
+        };
+        for o in outs {
+            match o {
+                RelayOut::ToClient(m) => {
+                    let _ = to_clients.send(m.to_string());
                 }
-            }
-            Ok(None) => {
-                logln("[nm-host] stdin EOF — Chrome closed the port");
-                break;
-            }
-            Err(e) => {
-                logln(&format!("[nm-host] read error: {e}"));
-                break;
+                RelayOut::ToExt(m) => {
+                    let _ = to_ext.send(m.to_string().into_bytes()).await;
+                }
             }
         }
     }
+    nm_log("[nm-host] stdin EOF — Chrome closed the port");
+    let _ = std::fs::remove_file(relay_url_path());
+}
+
+async fn handle_cdp_client(
+    stream: tokio::net::TcpStream,
+    guid: String,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::native::relay::RelayState>>,
+    mut from_relay: tokio::sync::broadcast::Receiver<String>,
+    to_ext: tokio::sync::mpsc::Sender<Vec<u8>>,
+) {
+    use crate::native::relay::ClientRoute;
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::sync::broadcast::error::RecvError;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let want_path = format!("/{guid}");
+    let cb = |req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+              resp: tokio_tungstenite::tungstenite::handshake::server::Response| {
+        if req.uri().path() == want_path {
+            Ok(resp)
+        } else {
+            let mut reject = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(
+                Some("forbidden".to_string()),
+            );
+            *reject.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+            Err(reject)
+        }
+    };
+    let ws = match tokio_tungstenite::accept_hdr_async(stream, cb).await {
+        Ok(ws) => ws,
+        Err(_) => return,
+    };
+    nm_log("[nm-host] cdp client connected");
+    let (mut tx, mut rx) = ws.split();
+    loop {
+        tokio::select! {
+            relayed = from_relay.recv() => match relayed {
+                Ok(text) => { if tx.send(Message::Text(text)).await.is_err() { break } }
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => break,
+            },
+            incoming = rx.next() => match incoming {
+                Some(Ok(Message::Text(text))) => {
+                    let v: serde_json::Value = match serde_json::from_str(&text) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let route = { state.lock().await.route_client_command(&v) };
+                    match route {
+                        ClientRoute::Local(reply) => {
+                            if tx.send(Message::Text(reply.to_string())).await.is_err() { break }
+                        }
+                        ClientRoute::Forward(env) => {
+                            let _ = to_ext.send(env.to_string().into_bytes()).await;
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                _ => {}
+            },
+        }
+    }
+    nm_log("[nm-host] cdp client disconnected");
 }
