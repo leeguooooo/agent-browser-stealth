@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrome Web Store 提交指南 — agent-browser connect</title>
+<style>
+  :root{--fg:#1a1a1a;--muted:#5c5c5c;--accent:#2563eb;--warn:#b45309;--ok:#15803d;--border:#e2e2e2;--bg:#fff;--code:#f5f5f7}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--fg);background:var(--bg);max-width:880px;margin:0 auto;padding:48px 24px;line-height:1.65}
+  header{border-bottom:2px solid var(--fg);padding-bottom:16px;margin-bottom:24px}
+  h1{font-size:1.7rem;margin:0 0 4px}
+  .sub{color:var(--muted)}
+  h2{font-size:1.2rem;margin:34px 0 10px;border-left:3px solid var(--accent);padding-left:10px}
+  h3{font-size:1rem;margin:20px 0 6px}
+  code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.88em}
+  pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow:auto;font-size:.86rem;white-space:pre-wrap}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:.92rem}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--code)}
+  ol li,ul li{margin:6px 0}
+  .warn{background:#fffbeb;border:1px solid #fde68a;border-left:4px solid var(--warn);padding:12px 14px;border-radius:6px;margin:16px 0}
+  .ok{background:#f0fdf4;border:1px solid #bbf7d0;border-left:4px solid var(--ok);padding:12px 14px;border-radius:6px;margin:16px 0}
+  .field{font-weight:600;color:var(--accent)}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>Chrome Web Store 提交指南</h1>
+  <div class="sub">agent-browser connect · 上传包 <code>extensions/ab-connect.zip</code> · id 锁定为 <code>ciiljdlhdpfckdcfkphgmfalanpdejep</code></div>
+</header>
+
+<p>为什么必须走商店:实测 Chrome 149 在<strong>非企业托管</strong>的 Mac 上,会把"非 Web Store"的 force-install 扩展直接标成 <code>[BLOCKED]</code>。商店扩展不受此限。这也是 codex / claude 扩展都发商店的原因。</p>
+
+<div class="warn">
+  <strong>评审风险(务必知道):</strong> 本扩展用了 <code>debugger</code> 权限,这是 Chrome Web Store 审核最严的权限之一。理由必须写清楚"只在用户本机、用户主动发指令时驱动用户自己的标签页,无远程服务器"。类似工具(如 claude-in-chrome)能过审,但可能被多问一轮、审核时间偏长(几天到一两周)。
+</div>
+
+<h2>一、前置(你来做,一次性)</h2>
+<ol>
+  <li>用一个 Google 账号登录 <code>https://chrome.google.com/webstore/devconsole</code></li>
+  <li>首次需付 <strong>$5</strong> 一次性开发者注册费</li>
+  <li>(隐私政策需要一个公开 URL,见第四节 —— 我可以帮你开 GitHub Pages 托管 <code>privacy.html</code>)</li>
+</ol>
+
+<h2>二、上传</h2>
+<ol>
+  <li>devconsole → <span class="field">New item</span> → 上传 <code>extensions/ab-connect.zip</code></li>
+  <li>上传后确认分配到的 Item ID = <code>ciiljdlhdpfckdcfkphgmfalanpdejep</code>(因为 manifest 里保留了 <code>key</code>,id 会被锁成这个,native messaging 的 allowed_origins 才对得上)。<strong>若 id 不是这个,告诉我,我重签。</strong></li>
+</ol>
+
+<h2>三、商店信息(直接复制以下文案)</h2>
+
+<h3>名称 / Name</h3>
+<pre>agent-browser connect</pre>
+
+<h3>简介 / Summary（≤132 字符）</h3>
+<pre>Let your own agent-browser CLI drive your logged-in Chrome — a local automation bridge. No remote server, no token.</pre>
+
+<h3>详细描述 / Description</h3>
+<pre>agent-browser connect is the in-browser half of the open-source agent-browser CLI. It lets the
+command-line tool you installed on this same computer automate the Chrome you're already logged
+into — opening pages, clicking, filling forms, reading the DOM — driven entirely by you.
+
+How it works
+- The extension talks ONLY to the local agent-browser CLI over Chrome native messaging (a local
+  inter-process channel — no network socket, no token, no remote server).
+- When you run an automation command, the extension relays Chrome DevTools Protocol operations to
+  the tab you target, then returns the result to the CLI.
+
+Privacy
+- No analytics, no trackers, no data collection.
+- Nothing is sent to any remote server. The only message peer is the local CLI.
+- Source is open (Apache-2.0): https://github.com/leeguooooo/agent-browser-stealth
+
+You need the agent-browser CLI installed and paired (run: agent-browser extension install) for this
+extension to do anything.</pre>
+
+<h3>类别 / Category</h3>
+<pre>Developer Tools</pre>
+
+<h3>语言 / Language</h3>
+<pre>English</pre>
+
+<h2>四、隐私实践（Privacy practices 标签页 —— 必填）</h2>
+
+<h3>Single purpose（单一用途）</h3>
+<pre>Bridge the user's locally-installed agent-browser CLI to their own logged-in Chrome so the CLI can
+automate pages the user is working with, entirely on the user's machine and at the user's command.</pre>
+
+<h3>各权限理由 / Permission justifications</h3>
+<table>
+  <tr><th>权限</th><th>理由（复制到对应输入框）</th></tr>
+  <tr><td class="field">debugger</td><td>Attaches the Chrome DevTools Protocol to the user's own active tab so the paired local agent-browser CLI can automate it (navigate, click, read DOM) only while the user is running a command. Commands arrive solely from the local CLI via native messaging; there is no remote endpoint.</td></tr>
+  <tr><td class="field">tabs</td><td>Enumerate and target the correct open tab to attach automation to.</td></tr>
+  <tr><td class="field">nativeMessaging</td><td>The sole communication channel: a local native-messaging connection to the agent-browser CLI installed on the same machine. No network is used.</td></tr>
+  <tr><td class="field">storage</td><td>Persist small local pairing/configuration state for the extension.</td></tr>
+  <tr><td class="field">alarms</td><td>Keep the MV3 service worker alive during longer automation sessions.</td></tr>
+  <tr><td class="field">webNavigation</td><td>Detect page loads/navigations so automation can wait for the right moment before acting.</td></tr>
+  <tr><td class="field">host permissions（若被问）</td><td>The extension declares none; tab access is mediated through the debugger attach the user initiates.</td></tr>
+</table>
+
+<h3>数据用途勾选 / Data usage</h3>
+<ul>
+  <li>不勾选任何"collects user data"类别。</li>
+  <li>三个合规声明全部勾选可以为真:不卖数据 / 不挪作无关用途 / 不用于判断信用资质。</li>
+  <li><span class="field">Privacy policy URL</span>:填 <code>privacy.html</code> 的公开地址(见下)。</li>
+</ul>
+
+<h2>五、隐私政策 URL</h2>
+<p>商店要求一个公开可访问的隐私政策地址。文件已写好:<code>extensions/store/privacy.html</code>。两种托管:</p>
+<ul>
+  <li><strong>推荐 · GitHub Pages</strong>(渲染好看):开启后地址类似 <code>https://leeguooooo.github.io/agent-browser-stealth/privacy.html</code>。<em>我可以帮你用 gh 开 Pages 并把文件放到位。</em></li>
+  <li><strong>临时 · raw 直链</strong>:<code>https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/extensions/store/privacy.html</code>(能访问,但浏览器显示源码不渲染,审核可能不喜欢)。</li>
+</ul>
+
+<h2>六、截图 / Screenshots（至少 1 张，1280×800 或 640×400）</h2>
+<p>可以截一张 CLI + Chrome 并排的演示图。<em>需要的话我用 cua-driver 截一张合规尺寸的图给你。</em></p>
+
+<h2>七、提交后</h2>
+<ol>
+  <li>提交审核 → 等几天。审核通过且状态变 <em>Published</em> 后告诉我。</li>
+  <li>我会把 <code>extension install</code> 的 force-install <code>update_url</code> 切到商店地址并发布新 fork;之后用户 <code>extension install</code> → 批准一次描述文件 → 静默装好(商店扩展不再 <code>[BLOCKED]</code>);或者用户在商店页一键 <span class="field">Add to Chrome</span>。</li>
+</ol>
+
+<div class="ok">
+  <strong>今天的临时可用方案:</strong> 在你这台 Mac 上 <code>chrome://extensions</code> → 打开开发者模式 → Load unpacked → 选 <code>extensions/ab-connect</code>,30 秒手动装一次,native messaging + <code>extension connect</code> 立即可用。等商店过审再切静默路径。
+</div>
+
+<footer>agent-browser-stealth · 提交包与文案随扩展版本更新;改扩展后重跑 <code>scripts/pack-extension.sh</code> 并重打 <code>ab-connect.zip</code>。</footer>
+</body>
+</html>

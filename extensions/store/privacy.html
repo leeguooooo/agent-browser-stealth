@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — agent-browser connect</title>
+<style>
+  :root{
+    --fg:#1a1a1a; --muted:#5c5c5c; --accent:#2563eb; --border:#e2e2e2; --bg:#fff; --code:#f5f5f5;
+  }
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--fg);background:var(--bg);max-width:820px;margin:0 auto;padding:48px 24px;line-height:1.65}
+  header{border-bottom:2px solid var(--fg);padding-bottom:16px;margin-bottom:28px}
+  h1{font-size:1.7rem;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:.95rem}
+  h2{font-size:1.15rem;margin:32px 0 8px;border-left:3px solid var(--accent);padding-left:10px}
+  code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.88em}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:.92rem}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--code)}
+  .key{font-weight:600;color:var(--accent)}
+  footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:.85rem}
+  strong{color:var(--fg)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Privacy Policy — agent-browser connect</h1>
+  <div class="sub">Chrome extension (id <code>ciiljdlhdpfckdcfkphgmfalanpdejep</code>) · Last updated 2026-06-09</div>
+</header>
+
+<p><strong>Summary: this extension collects no personal data, contains no analytics or
+trackers, and sends nothing to any remote server.</strong> It is a local bridge that lets the
+user's own <code>agent-browser</code> command-line tool, running on the same computer, drive the
+user's logged-in Chrome.</p>
+
+<h2>What the extension does</h2>
+<p>agent-browser connect pairs Chrome with the locally-installed <code>agent-browser</code> CLI over
+Chrome <em>native messaging</em> (a local inter-process channel; no network socket, no token). When
+the user issues an automation command in the CLI, the extension relays Chrome DevTools Protocol
+operations to the tab the user targets. Everything happens on the user's machine, initiated by the
+user.</p>
+
+<h2>Data collection &amp; use</h2>
+<table>
+  <tr><th>Category</th><th>Collected?</th><th>Detail</th></tr>
+  <tr><td class="key">Personally identifiable information</td><td>No</td><td>Never read, stored, or transmitted.</td></tr>
+  <tr><td class="key">Browsing history</td><td>No</td><td>Not collected. Page content is acted on transiently only while the user is running an automation command, and is never stored or sent off-device.</td></tr>
+  <tr><td class="key">Authentication / cookies / credentials</td><td>No</td><td>Not read or exported by the extension.</td></tr>
+  <tr><td class="key">Analytics / telemetry</td><td>No</td><td>The extension contains no analytics, tracking, or crash-reporting code.</td></tr>
+  <tr><td class="key">Remote transmission</td><td>No</td><td>The extension's only message peer is the local <code>agent-browser</code> CLI via native messaging. It makes no outbound network requests of its own.</td></tr>
+</table>
+
+<h2>Permissions &amp; why they are needed</h2>
+<table>
+  <tr><th>Permission</th><th>Purpose</th></tr>
+  <tr><td class="key">debugger</td><td>Attach the Chrome DevTools Protocol to the user's own tab so the local CLI can automate it, only while the user is actively running a command.</td></tr>
+  <tr><td class="key">tabs</td><td>Enumerate and target the correct open tab to automate.</td></tr>
+  <tr><td class="key">nativeMessaging</td><td>The local transport to the paired <code>agent-browser</code> CLI — the extension's sole communication channel.</td></tr>
+  <tr><td class="key">storage</td><td>Persist small local pairing/state values.</td></tr>
+  <tr><td class="key">alarms</td><td>Keep the MV3 service worker alive during longer automation sessions.</td></tr>
+  <tr><td class="key">webNavigation</td><td>Detect page loads so automation can wait for the right moment.</td></tr>
+</table>
+
+<h2>Data sharing</h2>
+<p>None. No data is sold, shared, or transferred to third parties. There are no third parties — the
+extension talks only to a program the user installed on the same computer.</p>
+
+<h2>Contact</h2>
+<p>Source code, issues, and contact: <code>https://github.com/leeguooooo/agent-browser-stealth</code></p>
+
+<footer>
+  agent-browser connect is open source (Apache-2.0). This policy applies to the extension only.
+</footer>
+</body>
+</html>

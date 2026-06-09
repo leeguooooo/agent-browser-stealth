@@ -24,14 +24,17 @@ pub const HOST_NAME: &str = "com.agent_browser.connect";
 /// that extension talk to this host, and the force-install policy references it.
 pub const EXTENSION_ID: &str = "ciiljdlhdpfckdcfkphgmfalanpdejep";
 
-/// Omaha/gupdate update manifest for the signed `ab-connect.crx`. The macOS
-/// configuration profile force-installs the extension from here, so no
-/// `chrome://extensions` "Load unpacked" GUI step is ever needed. Chrome 142+
-/// removed `--load-extension`, and macOS has blocked local-`.crx` external
-/// installs since Chrome 44 — a policy `update_url` is the only GUI-free path
-/// left into the real, logged-in profile.
-pub const UPDATE_URL: &str =
-    "https://raw.githubusercontent.com/leeguooooo/agent-browser-stealth/main/extensions/updates.xml";
+/// Update URL the force-install policy points at. MUST be the Chrome Web Store
+/// endpoint: Chrome 149 tags any **off-Web-Store** force-installed extension
+/// `[BLOCKED]` on an unmanaged browser (verified on macOS — chrome://policy shows
+/// `[BLOCKED]…` / "Error, Warning"). Self-hosting a `.crx` therefore does NOT
+/// work on consumer Chrome; the extension must be published to the Web Store, and
+/// then this policy force-installs it silently (Web Store extensions are allowed).
+pub const UPDATE_URL: &str = "https://clients2.google.com/service/update2/crx";
+
+/// Public Web Store listing — the guaranteed one-click "Add to Chrome" path,
+/// and the fallback when the force-install profile can't be approved headlessly.
+pub const STORE_URL: &str = "https://chromewebstore.google.com/detail/ciiljdlhdpfckdcfkphgmfalanpdejep";
 
 /// Stable identifiers for the generated Chrome configuration profile, so a
 /// re-install replaces (rather than duplicates) it in System Settings.
@@ -94,11 +97,14 @@ pub fn run_connect(args: &[String], json: bool) {
                             println!("\n✓ Chrome force-install profile written:\n  {}", path.display());
                             if cfg!(target_os = "macos") {
                                 println!(
-                                    "\nOne-time step (no file dialog, ever): approve the profile, then restart Chrome.\n\
-                                     System Settings → General → Device Management (or Privacy & Security →\n\
-                                     Profiles) → double-click \"agent-browser connect\" → Install.\n\
-                                     After approval Chrome force-installs the extension on next launch and\n\
-                                     keeps it up to date — no token, no per-use confirmation."
+                                    "\nGet the extension into Chrome (one-time). Either:\n\
+                                     A) One click: open {STORE_URL}\n   and press \"Add to Chrome\".\n\
+                                     B) Silent: approve the profile, then restart Chrome —\n   \
+                                     System Settings → General → Device Management → double-click\n   \
+                                     \"agent-browser connect\" → Install. Chrome then force-installs +\n   \
+                                     auto-updates it (no token, no per-use confirmation).\n\
+                                     Both need the extension published to the Web Store; until then use\n   \
+                                     chrome://extensions → Developer mode → Load unpacked → extensions/ab-connect."
                                 );
                             }
                         }
