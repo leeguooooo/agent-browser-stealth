@@ -658,8 +658,15 @@ fn main() {
         if clean.get(1).map(|s| s.as_str()) == Some("connect") {
             match connect::relay_url() {
                 Some(url) => {
+                    // The connect path reads `flags.cdp` (parsed from the original
+                    // argv, which was `extension connect` → None), NOT `clean`.
+                    // Without this the relay URL is dropped and we fall through to
+                    // auto-connect, grabbing some other Chrome (stale :9222) or
+                    // popping the remote-debug prompt. Point the daemon at the
+                    // relay explicitly.
+                    flags.cdp = Some(url.clone());
+                    flags.auto_connect = false;
                     clean = vec!["connect".to_string(), url];
-                    // fall through to the normal connect handling below
                 }
                 None => {
                     eprintln!(
