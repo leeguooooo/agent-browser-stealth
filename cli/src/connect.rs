@@ -233,6 +233,19 @@ fn relay_url_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp/ab-relay-cdp-url"))
 }
 
+/// The live relay CDP WebSocket URL, if the native-messaging host is running
+/// (it writes the file on connect and removes it on exit). Used by
+/// `agent-browser extension connect` to attach without the user copying a URL.
+pub fn relay_url() -> Option<String> {
+    let s = std::fs::read_to_string(relay_url_path()).ok()?;
+    let s = s.trim().to_string();
+    if s.starts_with("ws://") {
+        Some(s)
+    } else {
+        None
+    }
+}
+
 /// Hidden `__nm-host` mode: launched by Chrome for the ab-connect extension.
 ///
 /// Bridges the extension (native-messaging stdio, envelope protocol) to a local
@@ -390,6 +403,9 @@ async fn handle_cdp_client(
         Err(_) => return,
     };
     nm_log("[nm-host] cdp client connected");
+    // Ask the extension to (re)attach + announce every tab so this client
+    // discovers the user's existing tabs instead of racing an empty list.
+    let _ = to_ext.send(br#"{"method":"attachAll"}"#.to_vec()).await;
     let (mut tx, mut rx) = ws.split();
     loop {
         tokio::select! {

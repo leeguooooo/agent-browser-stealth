@@ -539,7 +539,7 @@ fn main() {
 
     let args: Vec<String> = env::args().skip(1).collect();
     let mut flags = parse_flags(&args);
-    let clean = clean_args(&args);
+    let mut clean = clean_args(&args);
 
     // Loudly warn when launching a fresh browser with no profile: it gets a
     // temporary EMPTY profile (no cookies / no login). For logged-in sites the
@@ -650,11 +650,29 @@ fn main() {
         return;
     }
 
-    // Handle extension (doesn't need daemon): native-messaging host install/status
-    // for the ab-connect extension. (`connect <port>` stays the CDP-attach command.)
+    // Handle extension: native-messaging host install/status, and
+    // `extension connect` which attaches to the live relay (auto-discovers the
+    // CDP url the host wrote) by rewriting into the normal `connect <url>` flow.
+    // (`connect <port>` stays the plain CDP-attach command.)
     if clean.first().map(|s| s.as_str()) == Some("extension") {
-        connect::run_connect(&clean, flags.json);
-        return;
+        if clean.get(1).map(|s| s.as_str()) == Some("connect") {
+            match connect::relay_url() {
+                Some(url) => {
+                    clean = vec!["connect".to_string(), url];
+                    // fall through to the normal connect handling below
+                }
+                None => {
+                    eprintln!(
+                        "{} extension not connected. Run `agent-browser extension install`, load the\n  ab-connect extension in Chrome (chrome://extensions → Developer mode →\n  Load unpacked → extensions/ab-connect), then retry.",
+                        color::error_indicator()
+                    );
+                    exit(1);
+                }
+            }
+        } else {
+            connect::run_connect(&clean, flags.json);
+            return;
+        }
     }
 
     // Handle session separately (doesn't need daemon)

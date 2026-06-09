@@ -76,6 +76,13 @@ async function onHostMessage(msg) {
     postToHost({ method: 'pong' })
     return
   }
+  // Daemon (re)connected — (re)attach and announce every tab so it discovers
+  // the user's existing tabs rather than racing an empty target list.
+  if (msg.method === 'attachAll') {
+    reannounceAttachedTabs()
+    await attachAllTabs()
+    return
+  }
   if (typeof msg.id !== 'undefined' && msg.method === 'forwardCDPCommand') {
     try {
       const result = await handleForwardCdpCommand(msg)
@@ -163,7 +170,18 @@ async function attachTab(tabId) {
   const existing = tabs.get(tabId)
   if (existing) return existing
   const dbg = { tabId }
-  await chrome.debugger.attach(dbg, '1.3')
+  try {
+    await chrome.debugger.attach(dbg, '1.3')
+  } catch (e) {
+    // After a service-worker restart, chrome.debugger may still be bound to
+    // this tab from the previous instance — "Another debugger is already
+    // attached". The tab is still controllable via {tabId}, so don't skip it
+    // (skipping is why existing tabs went un-announced and the daemon opened a
+    // blank tab instead). Re-announce it. Any other error (restricted page) is
+    // surfaced and the caller skips this tab.
+    const msg = String((e && e.message) || e)
+    if (!/already attached|already being debugged/i.test(msg)) throw e
+  }
   await chrome.debugger.sendCommand(dbg, 'Page.enable').catch(() => {})
   const info = /** @type {any} */ (await chrome.debugger.sendCommand(dbg, 'Target.getTargetInfo'))
   const targetInfo = info?.targetInfo

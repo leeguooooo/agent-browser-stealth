@@ -318,6 +318,35 @@ agent-browser --version               # Show version (-V)
 agent-browser <command> --help        # Show detailed help for a command
 ```
 
+## Drive your real, logged-in Chrome (extension — zero confirmation)
+
+Chrome 136 blocked `--remote-debugging-port` on the default profile, so to drive
+the user's *existing* logged-in window, agent-browser uses a Chrome **extension**
+over native messaging — no port, no token, no per-use confirmation (the
+codex/claude approach).
+
+One-time setup:
+```bash
+agent-browser extension install        # writes the native-messaging host manifest
+# then in Chrome: chrome://extensions → Developer mode → Load unpacked →
+#   <repo>/extensions/ab-connect   (load once)
+```
+
+Then, any time:
+```bash
+agent-browser extension connect        # auto-attaches to the live, logged-in tabs
+agent-browser tab                      # list the real tabs it now controls
+agent-browser tab t3                   # switch the session to one of them
+agent-browser snapshot -i / eval / click ...   # drive it like any session
+agent-browser extension status         # is the host installed?
+agent-browser extension uninstall      # remove the host manifest
+```
+
+Security: the extension↔host link is authenticated by Chrome (extension id); the
+host↔agent-browser CDP link uses an unguessable URL in a 0600 file. Use this when
+you need the user's real cookies/login on their actual machine. (`--extension
+<path>` is unrelated — that loads an extension into a *launched* browser.)
+
 ## Debugging
 
 ```bash
