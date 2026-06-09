@@ -672,7 +672,10 @@ impl DaemonState {
                     }
 
                     let tab_id = mgr.assign_tab_id();
-                    mgr.add_page(super::browser::PageInfo {
+                    // Passively discovered (event-driven) — must NOT steal the
+                    // active tab, or a foreign/user/other-session tab opening
+                    // hijacks this session's eval/screenshot target.
+                    mgr.add_background_page(super::browser::PageInfo {
                         tab_id,
                         label: None,
                         target_id: te.target_info.target_id.clone(),

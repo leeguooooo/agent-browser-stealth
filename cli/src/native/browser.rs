@@ -1532,6 +1532,21 @@ impl BrowserManager {
         self.active_page_index = index;
     }
 
+    /// Add a passively-discovered page WITHOUT changing the active tab.
+    ///
+    /// On a shared browser (ab-connect), `Target.targetCreated` events stream in
+    /// for tabs the user or OTHER agent sessions open. Those are drained on every
+    /// command; routing them through `add_page` made the active tab silently jump
+    /// to a foreign tab, so the session's own `eval`/`get title`/`screenshot`
+    /// landed on the wrong page. Passively-tracked pages must not steal focus —
+    /// only explicit opens (`tab new`, switch) set the active tab.
+    pub fn add_background_page(&mut self, page: PageInfo) {
+        if self.pages.iter().any(|p| p.target_id == page.target_id) {
+            return;
+        }
+        self.pages.push(page);
+    }
+
     pub fn update_page_target_info(&mut self, target: &TargetInfo) -> bool {
         update_page_target_info_in_pages(&mut self.pages, target)
     }
