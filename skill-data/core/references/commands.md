@@ -328,11 +328,25 @@ codex/claude approach).
 One-time setup:
 ```bash
 agent-browser extension install        # writes the native-messaging host manifest
-# then in Chrome: chrome://extensions → Developer mode → Load unpacked →
-#   <repo>/extensions/ab-connect   (load once)
 ```
+Then load the extension **once** — this is a GUI step (Chrome's `chrome://extensions`
+is privileged; the CLI can't load an unpacked extension):
 
-Then, any time:
+> chrome://extensions → enable **Developer mode** (top-right) → **Load unpacked** →
+> select `<repo>/extensions/ab-connect`
+
+**You can do this load step yourself with a computer-use / GUI-automation tool**
+(e.g. the `cua-driver` skill) — drive `chrome://extensions`, toggle Developer
+mode, click *Load unpacked*, pick the folder in the Open dialog. If the extension
+is already loaded, clicking its **Reload** (↻) button after a code change is
+enough. Notes from doing this live: tools that send *synthetic keystrokes* (e.g.
+peekaboo) often don't reach Chrome — **`cua-driver` works** because it reads
+Chrome's accessibility tree and clicks real elements. The native "Open" file
+dialog is the fiddly part; if keystroke entry there fails, ask the user to pick
+the folder (one click). After it loads, Chrome assigns the extension a fixed id
+(pinned in its manifest) and auto-connects the host.
+
+Then, any time (pure CLI, zero confirmation):
 ```bash
 agent-browser extension connect        # auto-attaches to the live, logged-in tabs
 agent-browser tab                      # list the real tabs it now controls

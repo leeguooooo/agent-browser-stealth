@@ -40,10 +40,22 @@ need a **real, logged-in browser** — not for reading text off a public page.
 | Specific facts from a static or public page | `WebFetch` or `curl` (no browser) |
 | Login state, interaction, JS-rendered or anti-bot pages | **agent-browser** (this skill) |
 | A page the user saved before / an internal system | `agent-browser find-url <keywords>` (their bookmarks), then open it |
+| The user's **own already-open, logged-in** Chrome window | the **extension connect** flow (below) |
 
 Don't hand-build deep URLs with query params — links discovered by *interacting*
 with the site carry the right hidden context and dodge anti-bot checks; a
 hand-constructed URL often doesn't.
+
+### Driving the user's real, already-open Chrome (extension)
+
+When the task needs the user's *live* logged-in window (their real session, the
+window they're looking at — not a fresh browser), use the extension connect flow:
+`agent-browser extension install` once, load `extensions/ab-connect` in
+`chrome://extensions` once (a GUI step you can perform with a **computer-use /
+GUI-automation tool** like the `cua-driver` skill — see
+`references/commands.md` → "Drive your real, logged-in Chrome"), then
+`agent-browser extension connect`. After that it's zero-confirmation, zero-token
+CLI. Use `--launch` instead when a fresh, isolated browser is fine.
 
 ## Two ways to drive a page — and when to drop to `eval`
 
