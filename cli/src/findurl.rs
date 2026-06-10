@@ -90,7 +90,7 @@ pub fn run_find_url(args: &[String], json: bool) {
     }
 
     // Most-recently-added first (date_added is microseconds since 1601).
-    hits.sort_by(|a, b| b.date_added.cmp(&a.date_added));
+    hits.sort_by_key(|b| std::cmp::Reverse(b.date_added));
     hits.truncate(limit);
 
     if json {
