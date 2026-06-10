@@ -3494,16 +3494,53 @@ async fn wait_for_selector(
     poll_until_true(client, session_id, &check_fn, timeout_ms).await
 }
 
+/// Convert a URL glob (Playwright-style: `*` matches within a path segment,
+/// `**` matches across segments, `?` matches one char) to an anchored regex.
+fn url_glob_to_regex(glob: &str) -> String {
+    let mut re = String::from("^");
+    let mut chars = glob.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    re.push_str(".*"); // ** — any chars incl. '/'
+                } else {
+                    re.push_str("[^/]*"); // * — any chars except '/'
+                }
+            }
+            '?' => re.push('.'),
+            '.' | '+' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '\\' => {
+                re.push('\\');
+                re.push(c);
+            }
+            _ => re.push(c),
+        }
+    }
+    re.push('$');
+    re
+}
+
 async fn wait_for_url(
     client: &super::cdp::client::CdpClient,
     session_id: &str,
     pattern: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
-    let check_fn = format!(
-        "location.href.includes({})",
-        serde_json::to_string(pattern).unwrap_or_default()
-    );
+    // A pattern with glob metacharacters is matched as a glob (the core skill
+    // documents `wait --url "**/dashboard"`); otherwise it's a plain substring
+    // so exact / partial URLs keep working.
+    let check_fn = if pattern.contains('*') || pattern.contains('?') {
+        format!(
+            "(()=>{{try{{return new RegExp({}).test(location.href)}}catch(e){{return false}}}})()",
+            serde_json::to_string(&url_glob_to_regex(pattern)).unwrap_or_default()
+        )
+    } else {
+        format!(
+            "location.href.includes({})",
+            serde_json::to_string(pattern).unwrap_or_default()
+        )
+    };
     poll_until_true(client, session_id, &check_fn, timeout_ms).await
 }
 
@@ -3539,8 +3576,19 @@ async fn poll_until_true(
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
 
     loop {
-        let result: super::cdp::types::EvaluateResult = client
-            .send_command_typed(
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(format!("Wait timed out after {}ms", timeout_ms));
+        }
+
+        // Bound each probe. A `Runtime.evaluate` issued while the page is
+        // navigating can hang (the execution context is being torn down); without
+        // a cap the `.await` would block past the deadline forever and wedge the
+        // daemon's request loop. Cap at the remaining budget (max 2s per probe).
+        let probe_cap = remaining.min(tokio::time::Duration::from_secs(2));
+        let probe = tokio::time::timeout(
+            probe_cap,
+            client.send_command_typed::<_, super::cdp::types::EvaluateResult>(
                 "Runtime.evaluate",
                 &super::cdp::types::EvaluateParams {
                     expression: expression.to_string(),
@@ -3548,24 +3596,31 @@ async fn poll_until_true(
                     await_promise: Some(true),
                 },
                 Some(session_id),
-            )
-            .await?;
+            ),
+        )
+        .await;
 
-        if result
-            .result
-            .value
-            .as_ref()
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            return Ok(());
+        // A probe that timed out or errored (e.g. the execution context was
+        // replaced mid-navigation) is transient — keep polling until the
+        // deadline rather than failing or hanging.
+        if let Ok(Ok(result)) = probe {
+            if result
+                .result
+                .value
+                .as_ref()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
         }
 
-        if tokio::time::Instant::now() >= deadline {
+        let nap = tokio::time::Duration::from_millis(100)
+            .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+        if nap.is_zero() {
             return Err(format!("Wait timed out after {}ms", timeout_ms));
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(nap).await;
     }
 }
 
@@ -6004,6 +6059,54 @@ async fn execute_subaction(
     }
 }
 
+/// CSS selector that matches an ARIA `role` — both an explicit `role="X"`
+/// attribute AND the HTML elements that carry that role *implicitly*. The naive
+/// `[role="X"], X` form fails for every role whose implicit element has a
+/// different tag than the role name (e.g. role `link` ⇒ `<a href>`, not `<link>`;
+/// role `heading` ⇒ `<h1>`..`<h6>`), which made `find role link/heading` never
+/// match real elements.
+fn role_to_query(role: &str) -> String {
+    let implicit = match role {
+        "link" => "a[href], area[href]",
+        "button" => "button, input[type=button], input[type=submit], input[type=reset], summary",
+        "heading" => "h1, h2, h3, h4, h5, h6",
+        "textbox" => {
+            "input[type=text], input[type=search], input[type=email], input[type=url], \
+             input[type=tel], input[type=password], input:not([type]), textarea"
+        }
+        "searchbox" => "input[type=search]",
+        "checkbox" => "input[type=checkbox]",
+        "radio" => "input[type=radio]",
+        "combobox" => "select",
+        "listbox" => "select[multiple]",
+        "slider" => "input[type=range]",
+        "spinbutton" => "input[type=number]",
+        "img" => "img",
+        "list" => "ul, ol",
+        "listitem" => "li",
+        "table" => "table",
+        "row" => "tr",
+        "cell" | "gridcell" => "td",
+        "columnheader" | "rowheader" => "th",
+        "article" => "article",
+        "navigation" => "nav",
+        "main" => "main",
+        "banner" => "header",
+        "contentinfo" => "footer",
+        "complementary" => "aside",
+        "figure" => "figure",
+        "separator" => "hr",
+        "progressbar" => "progress",
+        "group" => "fieldset",
+        _ => "",
+    };
+    if implicit.is_empty() {
+        format!("[role=\"{role}\"], {role}")
+    } else {
+        format!("[role=\"{role}\"], {implicit}")
+    }
+}
+
 fn build_role_selector(role: &str, name: Option<&str>, exact: bool) -> String {
     match name {
         Some(n) => {
@@ -6024,27 +6127,25 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
     let name = cmd.get("name").and_then(|v| v.as_str());
     let exact = cmd.get("exact").and_then(|v| v.as_bool()).unwrap_or(false);
 
+    // Accessible-name approximation: aria-label, then title/alt/value, then the
+    // element's text. Covers links (text), input buttons (value), images (alt).
     let name_match = name
         .map(|n| {
+            let nj = serde_json::to_string(n).unwrap_or_default();
             if exact {
-                format!(
-                    "el.getAttribute('aria-label') === {} || el.textContent.trim() === {}",
-                    serde_json::to_string(n).unwrap_or_default(),
-                    serde_json::to_string(n).unwrap_or_default()
-                )
+                format!("__an === {nj}")
             } else {
-                format!(
-                    "(el.getAttribute('aria-label') || '').includes({n}) || el.textContent.includes({n})",
-                    n = serde_json::to_string(n).unwrap_or_default()
-                )
+                format!("__an.includes({nj})")
             }
         })
         .unwrap_or_else(|| "true".to_string());
 
     let js = format!(
         r#"(() => {{
-            const els = document.querySelectorAll('[role="{role}"], {role}');
+            const els = document.querySelectorAll({selector});
             for (const el of els) {{
+                const __an = (el.getAttribute('aria-label') || el.getAttribute('title')
+                    || el.getAttribute('alt') || el.value || el.textContent || '').trim();
                 if ({name_match}) {{
                     el.setAttribute('data-agent-browser-located', 'true');
                     return true;
@@ -6052,7 +6153,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
             }}
             return false;
         }})()"#,
-        role = role,
+        selector = serde_json::to_string(&role_to_query(role)).unwrap_or_default(),
         name_match = name_match,
     );
 
@@ -8429,6 +8530,44 @@ mod tests {
     use super::*;
     use crate::test_utils::EnvGuard;
     use std::fs;
+
+    #[test]
+    fn test_url_glob_to_regex() {
+        assert_eq!(url_glob_to_regex("**/dashboard"), "^.*/dashboard$");
+        assert_eq!(url_glob_to_regex("**iana**"), "^.*iana.*$");
+        assert_eq!(
+            url_glob_to_regex("https://x.com/**"),
+            "^https://x\\.com/.*$"
+        );
+        // single * stays within a path segment
+        assert_eq!(url_glob_to_regex("/a/*/c"), "^/a/[^/]*/c$");
+        assert_eq!(url_glob_to_regex("/p?ge"), "^/p.ge$");
+    }
+
+    #[test]
+    fn test_url_glob_regex_matches() {
+        let re = regex_lite::Regex::new(&url_glob_to_regex("**/help/**")).unwrap();
+        assert!(re.is_match("https://www.iana.org/help/example-domains"));
+        assert!(!re.is_match("https://www.iana.org/about"));
+        let re2 = regex_lite::Regex::new(&url_glob_to_regex("https://www.iana.org/**")).unwrap();
+        assert!(re2.is_match("https://www.iana.org/help/example-domains"));
+    }
+
+    #[test]
+    fn test_role_to_query_implicit_elements() {
+        // links are <a href>, not <link>; headings are h1..h6
+        assert_eq!(
+            role_to_query("link"),
+            "[role=\"link\"], a[href], area[href]"
+        );
+        assert_eq!(
+            role_to_query("heading"),
+            "[role=\"heading\"], h1, h2, h3, h4, h5, h6"
+        );
+        assert!(role_to_query("button").contains("button"));
+        // unknown/custom roles fall back to the attribute + literal tag
+        assert_eq!(role_to_query("tablist"), "[role=\"tablist\"], tablist");
+    }
 
     fn unique_socket_dir(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()

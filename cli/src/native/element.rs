@@ -440,6 +440,18 @@ pub async fn resolve_element_object_id(
         )
         .await?;
 
+    // A syntactically-invalid selector makes `document.querySelector` THROW.
+    // With returnByValue:false, Runtime.evaluate then returns the thrown
+    // DOMException as a remote object *with* an objectId — which would otherwise
+    // be mistaken for "the element" and silently no-op a `.click()` on it. Treat
+    // any thrown exception as a hard error so a typo'd selector fails loudly.
+    if let Some(ex) = result.exception_details {
+        return Err(format!(
+            "Invalid selector '{}': {}",
+            selector_or_ref, ex.text
+        ));
+    }
+
     let object_id = result
         .result
         .object_id

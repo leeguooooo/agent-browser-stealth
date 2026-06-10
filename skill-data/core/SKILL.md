@@ -363,13 +363,14 @@ Pass `--hide-scrollbars false` when launching to keep native scrollbars visible.
 ```bash
 agent-browser tab                      # list open tabs (with stable tabId)
 agent-browser tab new https://docs...  # open a new tab (and switch to it)
-agent-browser tab 2                    # switch to tab 2
-agent-browser tab close 2              # close tab 2
+agent-browser tab t2                   # switch to tab t2
+agent-browser tab close t2             # close tab t2
 ```
 
-Stable `tabId`s mean `tab 2` points at the same tab across commands even
-when other tabs open or close. After switching, refs from a prior snapshot
-on a different tab no longer apply — re-snapshot.
+Tab ids are stable strings (`t1`, `t2`, …), never reused within a session, so
+the same id keeps referring to the same tab across commands. Positional
+integers are **not** accepted — use `t2`, not `2`. After switching, refs from a
+prior snapshot on a different tab no longer apply — re-snapshot.
 
 ### Run multiple browsers in parallel
 

@@ -228,12 +228,20 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         }
         // Navigation response
         if let Some(url) = data.get("url").and_then(|v| v.as_str()) {
-            if let Some(title) = data.get("title").and_then(|v| v.as_str()) {
-                println!("{} {}", color::success_indicator(), color::bold(title));
-                println!("  {}", color::dim(url));
-                return;
+            let title = data
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|t| !t.is_empty());
+            match title {
+                Some(t) => {
+                    println!("{} {}", color::success_indicator(), color::bold(t));
+                    println!("  {}", color::dim(url));
+                }
+                // Title-less page: show the URL with the checkmark instead of an
+                // empty title line.
+                None => println!("{} {}", color::success_indicator(), color::dim(url)),
             }
-            println!("{}", url);
             return;
         }
         if let Some(cdp_url) = data.get("cdpUrl").and_then(|v| v.as_str()) {

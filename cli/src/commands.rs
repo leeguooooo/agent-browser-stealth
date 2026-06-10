@@ -540,7 +540,7 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
 
         // === Wait ===
         "wait" => {
-            // Check for --url flag: wait --url "**/dashboard"
+            // Check for --url flag: wait --url "**/dashboard" [--timeout ms]
             if let Some(idx) = rest.iter().position(|&s| s == "--url" || s == "-u") {
                 let url = rest
                     .get(idx + 1)
@@ -548,7 +548,15 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --url".to_string(),
                         usage: "wait --url <pattern>",
                     })?;
-                return Ok(json!({ "id": id, "action": "waitforurl", "url": url }));
+                let mut cmd = json!({ "id": id, "action": "waitforurl", "url": url });
+                // Parse --timeout (without it the default applies — and a
+                // non-matching pattern would otherwise wait the full default).
+                if let Some(t_idx) = rest.iter().position(|&s| s == "--timeout") {
+                    if let Some(ms) = rest.get(t_idx + 1).and_then(|s| s.parse::<u64>().ok()) {
+                        cmd["timeout"] = json!(ms);
+                    }
+                }
+                return Ok(cmd);
             }
 
             // Check for --load flag: wait --load networkidle
@@ -3801,6 +3809,20 @@ mod tests {
         let cmd = parse_command(&args("wait --url **/dashboard"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "waitforurl");
         assert_eq!(cmd["url"], "**/dashboard");
+    }
+
+    #[test]
+    fn test_wait_url_with_timeout() {
+        // --timeout must be parsed for the --url path; without it a non-matching
+        // pattern waits the full default (and could wedge the daemon).
+        let cmd = parse_command(
+            &args("wait --url **/dashboard --timeout 3000"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["action"], "waitforurl");
+        assert_eq!(cmd["url"], "**/dashboard");
+        assert_eq!(cmd["timeout"], 3000);
     }
 
     #[test]
