@@ -94,6 +94,7 @@ automate pages the user is working with, entirely on the user's machine and at t
   <tr><th>权限</th><th>理由（复制到对应输入框）</th></tr>
   <tr><td class="field">debugger</td><td>Attaches the Chrome DevTools Protocol to the user's own active tab so the paired local agent-browser CLI can automate it (navigate, click, read DOM) only while the user is running a command. Commands arrive solely from the local CLI via native messaging; there is no remote endpoint.</td></tr>
   <tr><td class="field">tabs</td><td>Enumerate and target the correct open tab to attach automation to.</td></tr>
+  <tr><td class="field">tabGroups</td><td>Organizes the tabs the local agent-browser CLI drives into a labeled, colored Chrome tab group per automation session, so the user can see at a glance which tabs are under automation and they stay visually separated from the user's own tabs.</td></tr>
   <tr><td class="field">nativeMessaging</td><td>The sole communication channel: a local native-messaging connection to the agent-browser CLI installed on the same machine. No network is used.</td></tr>
   <tr><td class="field">storage</td><td>Persist small local pairing/configuration state for the extension.</td></tr>
   <tr><td class="field">alarms</td><td>Keep the MV3 service worker alive during longer automation sessions.</td></tr>
