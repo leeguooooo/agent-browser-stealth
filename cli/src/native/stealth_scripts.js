@@ -1,4 +1,31 @@
 const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLContextFallback: false, hideCanvas: false, canvasSeed: 0 };
+// Redefine a navigator property on its PROTOTYPE (Navigator / WorkerNavigator),
+// the way real Chrome exposes these — as prototype getters, NOT instance own
+// properties. Adding an own property to the `navigator` instance is itself a
+// detectable automation tell: real Chrome's `Object.getOwnPropertyNames(navigator)`
+// is empty, so any name we leave on the instance is caught by rebrowser's
+// `navigatorWebdriver` probe and similar checks. We mirror the proven `vendor`
+// patch below: define on the prototype, native-mask the getter's toString, then
+// delete any instance shadow. Falls back to an instance define only if the
+// prototype is locked. (A top-level `const` like this is script-scoped, not a
+// `window` property, so it does not leak — same as `__abStealth` above.)
+const __abRedefineNavProto = (name, getterImpl) => {
+  try {
+    const proto = Object.getPrototypeOf(navigator);
+    const nativeGet = Object.getOwnPropertyDescriptor(proto, name) && Object.getOwnPropertyDescriptor(proto, name).get;
+    const getter = function () { return getterImpl(); };
+    if (nativeGet) {
+      Object.defineProperty(getter, 'name', { value: 'get ' + name, configurable: true });
+      Object.defineProperty(getter, 'toString', { value: () => nativeGet.toString(), configurable: true, writable: true });
+    }
+    Object.defineProperty(proto, name, { get: getter, configurable: true, enumerable: true });
+    try { delete navigator[name]; } catch (e) {}
+    return true;
+  } catch (e) {
+    try { Object.defineProperty(navigator, name, { get: () => getterImpl(), configurable: true }); } catch (e2) {}
+    return false;
+  }
+};
 (function(){
   // Prefer the CDP-level automation override (Emulation.setAutomationOverride),
   // which makes navigator.webdriver report `false` NATIVELY — undetectable by
@@ -354,18 +381,8 @@ const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLCon
   const config = (typeof __abStealth === 'object' && __abStealth) ? __abStealth : null;
   if (!config || !Array.isArray(config.languages) || config.languages.length === 0) return;
   const locale = typeof config.locale === 'string' ? config.locale : config.languages[0];
-  try {
-    Object.defineProperty(navigator, 'language', {
-      get: () => locale,
-      configurable: true,
-    });
-  } catch {}
-  try {
-    Object.defineProperty(navigator, 'languages', {
-      get: () => config.languages.slice(),
-      configurable: true,
-    });
-  } catch {}
+  __abRedefineNavProto('language', () => locale);
+  __abRedefineNavProto('languages', () => config.languages.slice());
 })();
 (function(){
   const ua = String(navigator.userAgent || '');
@@ -1055,10 +1072,15 @@ const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLCon
       return false;
     }
   };
-  if (defineContacts(navigator)) return;
-  try {
-    defineContacts(Object.getPrototypeOf(navigator));
-  } catch {}
+  // Prototype-first (like the vendor patch): real Chrome exposes navigator
+  // members on the prototype, not as instance own properties. Define on the
+  // prototype and remove any instance shadow so Object.getOwnPropertyNames(navigator)
+  // stays empty; fall back to the instance only if the prototype is locked.
+  if (defineContacts(Object.getPrototypeOf(navigator))) {
+    try { delete navigator.contacts; } catch {}
+    return;
+  }
+  defineContacts(navigator);
 })();
 (function(){
   const ContentIndexCtor = typeof ContentIndex === 'function'
@@ -1265,12 +1287,7 @@ const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLCon
     }
     return values;
   };
-  try {
-    Object.defineProperty(navigator, 'userAgentData', {
-      get: () => patched,
-      configurable: true,
-    });
-  } catch {}
+  __abRedefineNavProto('userAgentData', () => patched);
 })();
 (function(){
   const ua = navigator.userAgent;
