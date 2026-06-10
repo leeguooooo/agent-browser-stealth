@@ -460,8 +460,7 @@ pub fn parse_flags(args: &[String]) -> Flags {
         auto_connect: !env_var_is_truthy("AGENT_BROWSER_NO_AUTO_CONNECT")
             && (env_var_is_truthy("AGENT_BROWSER_AUTO_CONNECT")
                 || config.auto_connect.unwrap_or(true)),
-        force_launch: env_var_is_truthy("AGENT_BROWSER_FORCE_LAUNCH")
-            || env::var("CI").is_ok(),
+        force_launch: env_var_is_truthy("AGENT_BROWSER_FORCE_LAUNCH") || env::var("CI").is_ok(),
         session_name: env::var("AGENT_BROWSER_SESSION_NAME")
             .ok()
             .or(config.session_name),

@@ -276,12 +276,8 @@ pub async fn resolve_element_center(
                 //
                 // Set AGENT_BROWSER_VERIFY_CLICK_TARGET=0 to skip.
                 if std::env::var("AGENT_BROWSER_VERIFY_CLICK_TARGET").as_deref() != Ok("0") {
-                    if let Err(e) =
-                        verify_click_target(client, effective_session_id, active_id, &ref_id, x, y)
-                            .await
-                    {
-                        return Err(e);
-                    }
+                    verify_click_target(client, effective_session_id, active_id, &ref_id, x, y)
+                        .await?;
                 }
                 return Ok((x, y, effective_session_id.to_string()));
             }
@@ -586,7 +582,9 @@ async fn verify_click_target(
     else {
         return Ok(());
     };
-    let Ok(resolved) = resolve_resp else { return Ok(()) };
+    let Ok(resolved) = resolve_resp else {
+        return Ok(());
+    };
     let Some(object_id) = resolved
         .get("object")
         .and_then(|o| o.get("objectId"))

@@ -1525,10 +1525,14 @@ async fn connect_auto_with_fresh_tab() -> Result<BrowserManager, String> {
     // about:blank. Failing here lets the caller surface the real error.
     if let Err(e) = mgr
         .client
-        .send_command("Runtime.evaluate", Some(serde_json::json!({
-            "expression": "1",
-            "returnByValue": true,
-        })), Some(&session_id))
+        .send_command(
+            "Runtime.evaluate",
+            Some(serde_json::json!({
+                "expression": "1",
+                "returnByValue": true,
+            })),
+            Some(&session_id),
+        )
         .await
     {
         return Err(format!(
@@ -1818,7 +1822,11 @@ async fn apply_stealth_to_session(state: &DaemonState, session_id: &str) {
 
 /// Apply stealth to the active page session (initial connect/launch).
 async fn apply_stealth_to_browser(state: &DaemonState) {
-    let session_id = match state.browser.as_ref().and_then(|m| m.active_session_id().ok()) {
+    let session_id = match state
+        .browser
+        .as_ref()
+        .and_then(|m| m.active_session_id().ok())
+    {
         Some(sid) => sid.to_string(),
         None => return,
     };

@@ -142,10 +142,7 @@ fn walk(node: &Value, folder: &str, keywords: &[String], out: &mut Vec<Hit>) {
             let url = node.get("url").and_then(|v| v.as_str()).unwrap_or("");
             // Skip non-navigable bookmarks: javascript: bookmarklets and data:
             // URIs aren't pages you can visit, and their bodies can be huge.
-            if url.is_empty()
-                || url.starts_with("javascript:")
-                || url.starts_with("data:")
-            {
+            if url.is_empty() || url.starts_with("javascript:") || url.starts_with("data:") {
                 return;
             }
             let hay = format!("{} {}", name.to_lowercase(), url.to_lowercase());

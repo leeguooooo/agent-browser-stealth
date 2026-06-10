@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use super::adaptive::ElementFingerprint;
 use super::cdp::client::CdpClient;
 use super::cdp::types::{
     AXNode, AXProperty, AXValue, EvaluateParams, EvaluateResult, GetFullAXTreeResult,
 };
-use super::adaptive::ElementFingerprint;
 use super::element::{resolve_ax_session, RefMap};
 
 const INTERACTIVE_ROLES: &[&str] = &[

@@ -129,12 +129,18 @@ impl RelayState {
                 ClientRoute::Local(json!({ "id": id, "result": {} }))
             }
             "Target.getTargets" => {
-                let infos: Vec<Value> =
-                    self.targets.values().map(|t| t.target_info.clone()).collect();
+                let infos: Vec<Value> = self
+                    .targets
+                    .values()
+                    .map(|t| t.target_info.clone())
+                    .collect();
                 ClientRoute::Local(json!({ "id": id, "result": { "targetInfos": infos } }))
             }
             "Target.attachToTarget" => {
-                let target_id = params.get("targetId").and_then(|t| t.as_str()).unwrap_or("");
+                let target_id = params
+                    .get("targetId")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
                 match self.targets.get(target_id) {
                     Some(entry) => ClientRoute::Local(
                         json!({ "id": id, "result": { "sessionId": entry.session_id } }),
@@ -237,7 +243,10 @@ impl RelayState {
                                 .to_string();
                             self.targets.insert(
                                 tid.to_string(),
-                                TargetEntry { session_id: sid, target_info: info.clone() },
+                                TargetEntry {
+                                    session_id: sid,
+                                    target_info: info.clone(),
+                                },
                             );
                         }
                     }
@@ -305,7 +314,10 @@ mod tests {
     fn learns_target_from_attached_event_and_does_not_forward_it() {
         let mut s = RelayState::new();
         let out = s.handle_ext_message(&attached_event("T1", "cb-tab-1"), "tok");
-        assert!(out.is_empty(), "attachedToTarget should be consumed, not forwarded");
+        assert!(
+            out.is_empty(),
+            "attachedToTarget should be consumed, not forwarded"
+        );
         // Now getTargets must report it.
         let route = s.route_client_command(1, &json!({ "id": 1, "method": "Target.getTargets" }));
         match route {
@@ -384,8 +396,14 @@ mod tests {
     fn reply_routes_back_to_the_issuing_client_with_original_id() {
         let mut s = RelayState::new();
         // Two clients each send a command that happens to share original id 1.
-        let r1 = s.route_client_command(100, &json!({ "id": 1, "method": "Page.navigate", "params": {} }));
-        let r2 = s.route_client_command(200, &json!({ "id": 1, "method": "Page.reload", "params": {} }));
+        let r1 = s.route_client_command(
+            100,
+            &json!({ "id": 1, "method": "Page.navigate", "params": {} }),
+        );
+        let r2 = s.route_client_command(
+            200,
+            &json!({ "id": 1, "method": "Page.reload", "params": {} }),
+        );
         let g1 = match r1 {
             ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
             _ => panic!(),
@@ -419,7 +437,10 @@ mod tests {
     #[test]
     fn forward_command_error_is_wrapped_and_routed() {
         let mut s = RelayState::new();
-        let r = s.route_client_command(5, &json!({ "id": 3, "method": "Page.navigate", "params": {} }));
+        let r = s.route_client_command(
+            5,
+            &json!({ "id": 3, "method": "Page.navigate", "params": {} }),
+        );
         let gid = match r {
             ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
             _ => panic!(),
@@ -459,7 +480,10 @@ mod tests {
     #[test]
     fn drop_client_clears_its_pending() {
         let mut s = RelayState::new();
-        let r = s.route_client_command(9, &json!({ "id": 1, "method": "Page.navigate", "params": {} }));
+        let r = s.route_client_command(
+            9,
+            &json!({ "id": 1, "method": "Page.navigate", "params": {} }),
+        );
         let gid = match r {
             ClientRoute::Forward(v) => v["id"].as_i64().unwrap(),
             _ => panic!(),
@@ -478,7 +502,12 @@ mod tests {
         let mut s = RelayState::new();
         let req = json!({ "type": "req", "id": "c1", "method": "connect", "params": { "auth": { "token": "good" } } });
         let ok = s.handle_ext_message(&req, "good");
-        assert_eq!(ok, vec![RelayOut::ToExt(json!({ "type": "res", "id": "c1", "ok": true }))]);
+        assert_eq!(
+            ok,
+            vec![RelayOut::ToExt(
+                json!({ "type": "res", "id": "c1", "ok": true })
+            )]
+        );
 
         let bad = s.handle_ext_message(&req, "different");
         match &bad[0] {

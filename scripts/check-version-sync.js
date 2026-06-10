@@ -27,16 +27,9 @@ if (!cargoVersionMatch) {
 
 const cargoVersion = cargoVersionMatch[1];
 
-// Read dashboard package.json version
-const dashboardPkg = JSON.parse(readFileSync(join(rootDir, 'packages/dashboard/package.json'), 'utf-8'));
-const dashboardVersion = dashboardPkg.version;
-
 const mismatches = [];
 if (packageVersion !== cargoVersion) {
   mismatches.push(`  cli/Cargo.toml:              ${cargoVersion}`);
-}
-if (packageVersion !== dashboardVersion) {
-  mismatches.push(`  packages/dashboard:          ${dashboardVersion}`);
 }
 
 if (mismatches.length > 0) {

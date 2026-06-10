@@ -620,7 +620,7 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             // racing into a half-rendered UI.
             let state_override = if rest.iter().any(|&s| s == "--gone" || s == "--detached") {
                 Some("detached")
-            } else if rest.iter().any(|&s| s == "--hidden") {
+            } else if rest.contains(&"--hidden") {
                 Some("hidden")
             } else {
                 None
@@ -1069,8 +1069,8 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
         // Top-level shortcuts for `get <x>` status reads — users naturally type
         // `agent-browser url` / `cdp-url` / `title` without the `get` prefix
         // (and expect `cdp-url`/`cdp_url` to work interchangeably).
-        "url" | "cdp-url" | "cdp_url" | "title" | "html" | "text" | "value"
-        | "count" | "box" | "styles" | "attr" => {
+        "url" | "cdp-url" | "cdp_url" | "title" | "html" | "text" | "value" | "count" | "box"
+        | "styles" | "attr" => {
             let sub = if cmd == "cdp_url" { "cdp-url" } else { cmd };
             let mut get_args: Vec<&str> = Vec::with_capacity(rest.len() + 1);
             get_args.push(sub);
@@ -5177,11 +5177,8 @@ mod tests {
 
     #[test]
     fn test_find_role_missing_action_verb_with_name_flag() {
-        let err = parse_command(
-            &args("find role button --name Submit"),
-            &default_flags(),
-        )
-        .unwrap_err();
+        let err =
+            parse_command(&args("find role button --name Submit"), &default_flags()).unwrap_err();
         let msg = err.format();
         assert!(
             msg.contains("Missing action verb"),
@@ -5199,11 +5196,7 @@ mod tests {
 
     #[test]
     fn test_find_testid_missing_action_verb_with_exact_flag() {
-        let err = parse_command(
-            &args("find testid foo --exact"),
-            &default_flags(),
-        )
-        .unwrap_err();
+        let err = parse_command(&args("find testid foo --exact"), &default_flags()).unwrap_err();
         assert!(err.format().contains("Missing action verb"));
     }
 
@@ -5252,11 +5245,8 @@ mod tests {
 
     #[test]
     fn test_wait_gone_with_timeout() {
-        let cmd = parse_command(
-            &args("wait .modal --gone --timeout 2000"),
-            &default_flags(),
-        )
-        .unwrap();
+        let cmd =
+            parse_command(&args("wait .modal --gone --timeout 2000"), &default_flags()).unwrap();
         assert_eq!(cmd["selector"], ".modal");
         assert_eq!(cmd["state"], "detached");
         assert_eq!(cmd["timeout"], 2000);

@@ -813,11 +813,13 @@ pub async fn auto_connect_cdp() -> Result<String, String> {
         }
     }
 
-    Err("No running Chrome with remote debugging found. Remote debugging is a \
+    Err(
+        "No running Chrome with remote debugging found. Remote debugging is a \
          startup flag, not a setting: fully quit Chrome and relaunch it with \
          --remote-debugging-port=9222 (then agent-browser auto-connects), or pass \
          --cdp <port>/--launch."
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Resolve a CDP WebSocket URL from a DevToolsActivePort entry.
@@ -861,11 +863,7 @@ async fn resolve_cdp_from_active_port(port: u16, ws_path: &str) -> Result<String
 async fn tcp_port_alive(port: u16) -> bool {
     let timeout = Duration::from_secs(1);
     matches!(
-        tokio::time::timeout(
-            timeout,
-            tokio::net::TcpStream::connect(("127.0.0.1", port)),
-        )
-        .await,
+        tokio::time::timeout(timeout, tokio::net::TcpStream::connect(("127.0.0.1", port)),).await,
         Ok(Ok(_))
     )
 }
@@ -2181,7 +2179,11 @@ mod tests {
         let ws_path = "/devtools/browser/test-uuid-1234";
 
         let result = resolve_cdp_from_active_port(port, ws_path).await;
-        assert!(result.is_ok(), "should succeed when port is live: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "should succeed when port is live: {:?}",
+            result
+        );
         assert_eq!(
             result.unwrap(),
             format!("ws://127.0.0.1:{}{}", port, ws_path),
@@ -2207,11 +2209,8 @@ mod tests {
             // The liveness check connects then drops without writing anything.
             // Assert we receive no WebSocket upgrade bytes (EOF / no data).
             let mut buf = [0u8; 128];
-            let read = tokio::time::timeout(
-                Duration::from_millis(500),
-                stream.read(&mut buf),
-            )
-            .await;
+            let read =
+                tokio::time::timeout(Duration::from_millis(500), stream.read(&mut buf)).await;
             match read {
                 Ok(Ok(n)) => assert_eq!(n, 0, "resolve must not send a WS/CDP handshake"),
                 Ok(Err(_)) | Err(_) => {} // closed or nothing sent — both fine

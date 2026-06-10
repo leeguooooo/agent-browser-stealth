@@ -24,10 +24,24 @@ pub async fn click(
     // inside the viewport. Without this, an element below the fold (or revealed
     // after scroll/popup) yields off-viewport coordinates and the click lands on
     // whatever currently occupies that point. Best-effort: ignore failures.
-    scroll_into_view_if_needed(client, session_id, ref_map, selector_or_ref, iframe_sessions).await;
+    scroll_into_view_if_needed(
+        client,
+        session_id,
+        ref_map,
+        selector_or_ref,
+        iframe_sessions,
+    )
+    .await;
 
     if mode == "dom" {
-        return dom_click(client, session_id, ref_map, selector_or_ref, iframe_sessions).await;
+        return dom_click(
+            client,
+            session_id,
+            ref_map,
+            selector_or_ref,
+            iframe_sessions,
+        )
+        .await;
     }
 
     let resolved = resolve_element_center(
@@ -57,9 +71,15 @@ pub async fn click(
                 "[click] coordinate click failed ({e}); falling back to DOM dispatch \
                  (set AGENT_BROWSER_CLICK_MODE=coord to disable)"
             );
-            dom_click(client, session_id, ref_map, selector_or_ref, iframe_sessions)
-                .await
-                .map_err(|dom_err| format!("{e}\n(DOM-dispatch fallback also failed: {dom_err})"))
+            dom_click(
+                client,
+                session_id,
+                ref_map,
+                selector_or_ref,
+                iframe_sessions,
+            )
+            .await
+            .map_err(|dom_err| format!("{e}\n(DOM-dispatch fallback also failed: {dom_err})"))
         }
     }
 }

@@ -84,7 +84,9 @@ fn embedded_skills_root() -> Option<PathBuf> {
         let _ = fs::create_dir_all(base.join("skills"));
         let _ = fs::create_dir_all(base.join("skill-data"));
         if EMBEDDED_SKILLS.extract(base.join("skills")).is_err()
-            || EMBEDDED_SKILL_DATA.extract(base.join("skill-data")).is_err()
+            || EMBEDDED_SKILL_DATA
+                .extract(base.join("skill-data"))
+                .is_err()
         {
             return None;
         }

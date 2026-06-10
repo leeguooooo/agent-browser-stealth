@@ -334,7 +334,14 @@ Then load the extension **once** — this is a GUI step (Chrome's `chrome://exte
 is privileged; the CLI can't load an unpacked extension):
 
 > chrome://extensions → enable **Developer mode** (top-right) → **Load unpacked** →
-> select `<repo>/extensions/ab-connect`
+> select `<repo>/extensions/ab-connect` (it appears in the list as
+> **agent-browser-stealth**)
+
+Once loaded, the relay goes live and plain `agent-browser open <url>` connects
+through it automatically — `auto_connect_cdp` prefers the live extension relay
+over a raw `--remote-debugging-port`, so Chrome 136+'s "Allow remote debugging?"
+consent popup never appears. `agent-browser extension connect` is the explicit
+form of the same path.
 
 **You can do this load step yourself with a computer-use / GUI-automation tool**
 (e.g. the `cua-driver` skill) — drive `chrome://extensions`, toggle Developer

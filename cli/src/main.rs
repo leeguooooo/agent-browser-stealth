@@ -1,8 +1,8 @@
 mod chat;
 mod color;
 mod commands;
-mod connection;
 mod connect;
+mod connection;
 mod doctor;
 mod findurl;
 mod flags;

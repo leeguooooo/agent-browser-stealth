@@ -62,7 +62,10 @@ pub fn run_upgrade() {
                 color::success_indicator()
             );
         } else {
-            eprintln!("{} Upgrade failed. Install manually:", color::error_indicator());
+            eprintln!(
+                "{} Upgrade failed. Install manually:",
+                color::error_indicator()
+            );
             eprintln!("  curl -fsSL {} | sh", INSTALL_URL);
             exit(1);
         }

@@ -34,7 +34,8 @@ pub const UPDATE_URL: &str = "https://clients2.google.com/service/update2/crx";
 
 /// Public Web Store listing — the guaranteed one-click "Add to Chrome" path,
 /// and the fallback when the force-install profile can't be approved headlessly.
-pub const STORE_URL: &str = "https://chromewebstore.google.com/detail/ciiljdlhdpfckdcfkphgmfalanpdejep";
+pub const STORE_URL: &str =
+    "https://chromewebstore.google.com/detail/ciiljdlhdpfckdcfkphgmfalanpdejep";
 
 /// Stable identifiers for the generated Chrome configuration profile, so a
 /// re-install replaces (rather than duplicates) it in System Settings.
@@ -52,7 +53,11 @@ pub fn run_connect(args: &[String], json: bool) {
         let removed = remove_host_manifests();
         let profile_removed = remove_force_install_profile();
         if json {
-            report(json, true, &format!("removed {removed} native-host manifest(s)"));
+            report(
+                json,
+                true,
+                &format!("removed {removed} native-host manifest(s)"),
+            );
         } else {
             println!("✓ removed {removed} native-host manifest(s).");
             if profile_removed {
@@ -94,7 +99,10 @@ pub fn run_connect(args: &[String], json: bool) {
                     }
                     match profile {
                         Ok(path) => {
-                            println!("\n✓ Chrome force-install profile written:\n  {}", path.display());
+                            println!(
+                                "\n✓ Chrome force-install profile written:\n  {}",
+                                path.display()
+                            );
                             if cfg!(target_os = "macos") {
                                 println!(
                                     "\nGet the extension into Chrome (one-time). Either:\n\
@@ -300,7 +308,12 @@ fn native_messaging_dirs() -> Vec<PathBuf> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Some(config) = dirs::config_dir() {
-            for sub in ["google-chrome", "chromium", "microsoft-edge", "BraveSoftware/Brave-Browser"] {
+            for sub in [
+                "google-chrome",
+                "chromium",
+                "microsoft-edge",
+                "BraveSoftware/Brave-Browser",
+            ] {
                 dirs_out.push(config.join(sub).join("NativeMessagingHosts"));
             }
         }
@@ -347,7 +360,11 @@ fn nm_log(line: &str) {
     if let Some(p) = path.parent() {
         let _ = std::fs::create_dir_all(p);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -387,7 +404,10 @@ pub fn relay_url() -> Option<String> {
 /// file) so only this user's agent-browser — not arbitrary local processes —
 /// can drive the browser. No token, no user interaction.
 pub fn run_nm_host() {
-    let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             nm_log(&format!("[nm-host] runtime build failed: {e}"));
@@ -531,6 +551,9 @@ async fn nm_host_main() {
 }
 
 #[allow(clippy::too_many_arguments)]
+// The handshake-callback Result type is dictated by tokio-tungstenite's
+// accept_hdr_async contract; its Err variant (an http Response) can't be shrunk.
+#[allow(clippy::result_large_err)]
 async fn handle_cdp_client(
     stream: tokio::net::TcpStream,
     guid: String,
@@ -539,7 +562,9 @@ async fn handle_cdp_client(
     mut from_relay: tokio::sync::mpsc::UnboundedReceiver<String>,
     to_ext: tokio::sync::mpsc::Sender<Vec<u8>>,
     clients: std::sync::Arc<
-        tokio::sync::Mutex<std::collections::HashMap<u64, tokio::sync::mpsc::UnboundedSender<String>>>,
+        tokio::sync::Mutex<
+            std::collections::HashMap<u64, tokio::sync::mpsc::UnboundedSender<String>>,
+        >,
     >,
 ) {
     use crate::native::relay::ClientRoute;

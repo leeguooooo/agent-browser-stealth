@@ -51,11 +51,15 @@ hand-constructed URL often doesn't.
 When the task needs the user's *live* logged-in window (their real session, the
 window they're looking at — not a fresh browser), use the extension connect flow:
 `agent-browser extension install` once, load `extensions/ab-connect` in
-`chrome://extensions` once (a GUI step you can perform with a **computer-use /
-GUI-automation tool** like the `cua-driver` skill — see
-`references/commands.md` → "Drive your real, logged-in Chrome"), then
-`agent-browser extension connect`. After that it's zero-confirmation, zero-token
-CLI. Use `--launch` instead when a fresh, isolated browser is fine.
+`chrome://extensions` once (it shows up as **agent-browser-stealth**; a GUI step
+you can perform with a **computer-use / GUI-automation tool** like the
+`cua-driver` skill — see `references/commands.md` → "Drive your real, logged-in
+Chrome"). Once the extension is loaded, plain `agent-browser open <url>`
+auto-connects through it — `auto_connect_cdp` **prefers the live extension relay
+over a raw `--remote-debugging-port`**, so Chrome 136+'s "Allow remote debugging?"
+consent popup never fires. `agent-browser extension connect` is the explicit form
+of the same path. Zero-confirmation, zero-token. Use `--launch` instead when a
+fresh, isolated browser is fine.
 
 Each `--session` that connects gets its **own colored Chrome tab group** (named
 after the session) and drives only its own tabs — multiple agents share the one

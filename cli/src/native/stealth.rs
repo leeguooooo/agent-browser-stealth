@@ -186,9 +186,7 @@ fn resolve_timezone(locale: Option<&str>) -> Option<String> {
         return None;
     }
     if raw.eq_ignore_ascii_case("auto") {
-        return locale
-            .and_then(locale_default_timezone)
-            .map(str::to_string);
+        return locale.and_then(locale_default_timezone).map(str::to_string);
     }
     Some(raw.to_string())
 }
@@ -265,8 +263,7 @@ pub fn strip_source_url_labels(input: &str) -> String {
     let re_line = regex_lite::Regex::new(r"(?i)\n?\s*//[@#]\s*sourceURL=[^\n\r]*").unwrap();
     let output = re_line.replace_all(input, "");
     // Remove /*# sourceURL=...*/ block comments
-    let re_block =
-        regex_lite::Regex::new(r"(?is)\n?\s*/\*[@#]\s*sourceURL=[\s\S]*?\*/").unwrap();
+    let re_block = regex_lite::Regex::new(r"(?is)\n?\s*/\*[@#]\s*sourceURL=[\s\S]*?\*/").unwrap();
     re_block.replace_all(&output, "").to_string()
 }
 
@@ -370,7 +367,10 @@ mod timezone_tests {
         assert_eq!(resolve_timezone(Some("en-US")), None);
 
         std::env::set_var("AGENT_BROWSER_TIMEZONE", "auto");
-        assert_eq!(resolve_timezone(Some("ja-JP")), Some("Asia/Tokyo".to_string()));
+        assert_eq!(
+            resolve_timezone(Some("ja-JP")),
+            Some("Asia/Tokyo".to_string())
+        );
         assert_eq!(resolve_timezone(Some("xx-YY")), None);
         assert_eq!(resolve_timezone(None), None);
 

@@ -1094,7 +1094,10 @@ impl BrowserManager {
         if !via_relay {
             return None;
         }
-        let name = DAEMON_SESSION.get().map(String::as_str).unwrap_or("default");
+        let name = DAEMON_SESSION
+            .get()
+            .map(String::as_str)
+            .unwrap_or("default");
         if name.is_empty() {
             None
         } else {
@@ -1853,8 +1856,14 @@ mod tests {
     #[test]
     fn liveness_transport_error_is_dead_for_both_kinds() {
         // A closed/reset WebSocket is a genuine death — reconnect in both cases.
-        assert!(!connection_alive_from_probe(LivenessProbe::TransportError, true));
-        assert!(!connection_alive_from_probe(LivenessProbe::TransportError, false));
+        assert!(!connection_alive_from_probe(
+            LivenessProbe::TransportError,
+            true
+        ));
+        assert!(!connection_alive_from_probe(
+            LivenessProbe::TransportError,
+            false
+        ));
     }
 
     #[test]

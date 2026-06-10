@@ -271,7 +271,11 @@ mod tests {
 
     #[test]
     fn identical_fingerprints_score_one() {
-        let a = fp("button", "Submit", &[("id", "go"), ("class", "btn primary")]);
+        let a = fp(
+            "button",
+            "Submit",
+            &[("id", "go"), ("class", "btn primary")],
+        );
         assert!((score(&a, &a) - 1.0).abs() < 1e-9);
     }
 
@@ -308,7 +312,12 @@ mod tests {
         let mut b = fp("button", "OK", &[]);
         a.ancestors = vec!["form#f".into(), "div.col".into(), "body".into()];
         // b wrapped in an extra div — DOM path changed but mostly preserved
-        b.ancestors = vec!["form#f".into(), "div.wrap".into(), "div.col".into(), "body".into()];
+        b.ancestors = vec![
+            "form#f".into(),
+            "div.wrap".into(),
+            "div.col".into(),
+            "body".into(),
+        ];
         let s = score(&a, &b);
         assert!(s > 0.85, "got {s}");
     }
