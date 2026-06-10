@@ -22,6 +22,47 @@ For basic usage, commands, and API reference, see the [upstream documentation](h
 | User collaboration | Separate window | Same window, take over anytime |
 | CAPTCHA | Agent stuck | You solve it, agent continues |
 
+## How it works
+
+![how it works](assets/how-it-works.png)
+
+Your **agent-browser CLI** talks to a tiny **browser extension** over Chrome
+**native messaging** — a local inter-process channel, *no network socket, no
+token, no remote server*. The extension uses `chrome.debugger` to drive the tabs
+you target in **your own, already-logged-in Chrome**, then hands results back to
+the CLI. Everything stays on your machine.
+
+![architecture](assets/architecture.png)
+
+Each `--session` gets its **own colored Chrome tab group**, so multiple agents
+can share one real browser concurrently without stepping on each other — or your
+own tabs.
+
+## Why the extension (not a raw debug port)
+
+Other local tools drive Chrome over a raw `--remote-debugging-port` (CDP). Since
+**Chrome 136**, every such connection pops a blocking **"Allow remote debugging?"**
+consent dialog — and the port has to be enabled up front. Our extension uses
+native messaging instead: **install once, then zero per-use confirmation.**
+
+| | **agent-browser-stealth** (this extension) | web-access (raw CDP port) | Claude in Chrome (chrome.debugger) |
+|---|---|---|---|
+| Connect method | native messaging — no port, no token | `--remote-debugging-port` | `chrome.debugger` |
+| **"Allow remote debugging?" popup** | **never** ✅ | **every connection** 🔴 | no |
+| Uses your real login | yes | yes | yes |
+| `Runtime.enable` (CDP) leak¹ | **off by default → clean** ✅ | domain enabled | n/a |
+| CreepJS stealth score² | **0% stealth · 0% headless** ✅ | real Chrome | real Chrome |
+| Per-session tab groups / concurrent agents | **yes** ✅ | no | no |
+| Built for the agent-browser CLI | yes | a separate proxy | a single-app assistant |
+
+> ¹ Verified against [rebrowser-bot-detector](https://bot-detector.rebrowser.net/):
+> our relay reports `runtimeEnableLeak: 🟢 No leak` and `navigatorWebdriver: 🟢`.
+> ² Verified against [CreepJS](https://abrahamjuliot.github.io/creepjs/) on the
+> connected real-Chrome path — see [Anti-detection](#anti-detection).
+>
+> The consent dialog isn't hypothetical: a raw-port tool pops it on **every**
+> attach (Chrome 136+ security). The extension path never does.
+
 ## Install
 
 ```bash
