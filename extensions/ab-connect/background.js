@@ -21,6 +21,9 @@ const SKIP_URL = /^(chrome|chrome-extension|devtools|chrome-untrusted|edge|about
 
 /** @type {chrome.runtime.Port|null} */
 let port = null
+/** Whether the native-messaging host (the local agent-browser CLI) is linked.
+ *  Read by the popup status page. */
+let hostConnected = false
 let nextSession = 1
 /** tabId -> { sessionId, targetId } */
 const tabs = new Map()
@@ -92,13 +95,16 @@ function connectHost() {
   if (port) return
   try {
     port = chrome.runtime.connectNative(HOST_NAME)
+    hostConnected = true
   } catch (e) {
     port = null
+    hostConnected = false
     return
   }
   port.onMessage.addListener((msg) => void whenReady(() => onHostMessage(msg)))
   port.onDisconnect.addListener(() => {
     port = null
+    hostConnected = false
     // Sessions are stale once the host is gone; the daemon re-discovers on
     // reconnect. Keep chrome.debugger attached so reconnect is cheap.
     for (const tabId of tabs.keys()) setBadge(tabId, 'connecting')
@@ -343,7 +349,18 @@ chrome.tabs.onRemoved.addListener((tabId) => void whenReady(() => detachTab(tabI
 
 chrome.runtime.onInstalled.addListener(() => void whenReady(connectHost))
 chrome.runtime.onStartup.addListener(() => void whenReady(connectHost))
-chrome.action.onClicked.addListener(() => void whenReady(connectHost))
+
+// Popup status page asks for the live pairing state. Attempt a (re)connect on
+// demand so opening the popup also nudges the link awake, then report.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'ab-status') {
+    if (!port) {
+      try { connectHost() } catch (e) {}
+    }
+    sendResponse({ connected: hostConnected, tabCount: tabs.size, host: HOST_NAME })
+  }
+  return true
+})
 
 // MV3 service workers get suspended; an alarm wakes us to keep the host link
 // and badges fresh.

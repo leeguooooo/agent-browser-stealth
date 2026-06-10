@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a21;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --cyan: #2ad4ff;
+    --green: #3fb950;
+    --amber: #d29922;
+    --border: #232a33;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    width: 320px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  header img { width: 32px; height: 32px; border-radius: 7px; }
+  header .title { font-weight: 600; font-size: 14px; }
+  header .ver { color: var(--muted); font-size: 11px; }
+  main { padding: 14px 16px 8px; }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex: none;
+    box-shadow: 0 0 0 0 rgba(0,0,0,0);
+  }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.off { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .status .label { font-weight: 600; }
+  .status .sub { color: var(--muted); font-size: 11px; }
+  .desc { color: var(--muted); margin: 12px 2px 4px; }
+  .hint {
+    margin: 10px 0 2px;
+    padding: 9px 11px;
+    background: #1d1a12;
+    border: 1px solid #3a3014;
+    border-radius: 8px;
+    color: #e3c878;
+    font-size: 12px;
+    display: none;
+  }
+  .hint code {
+    display: block;
+    margin-top: 5px;
+    padding: 6px 8px;
+    background: #0b0d10;
+    border-radius: 6px;
+    color: var(--cyan);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    user-select: all;
+  }
+  footer {
+    padding: 10px 16px 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  footer .privacy { color: var(--muted); font-size: 11px; }
+  footer a { color: var(--cyan); text-decoration: none; font-size: 11px; cursor: pointer; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon128.png" alt="" />
+    <div>
+      <div class="title">agent-browser-stealth</div>
+      <div class="ver">local automation bridge</div>
+    </div>
+  </header>
+
+  <main>
+    <div class="status">
+      <span id="dot" class="dot"></span>
+      <div>
+        <div class="label" id="statusLabel">Checking…</div>
+        <div class="sub" id="statusSub">contacting the local CLI</div>
+      </div>
+    </div>
+
+    <p class="desc">
+      Lets your locally-installed <strong>agent-browser</strong> command-line tool
+      drive your own logged-in Chrome tabs — entirely on this machine, only when
+      you run a command. No remote server, no data collection.
+    </p>
+
+    <div class="hint" id="hint">
+      Not linked yet. Install &amp; pair the CLI, then reopen this popup:
+      <code>agent-browser extension install</code>
+    </div>
+  </main>
+
+  <footer>
+    <span class="privacy">No tracking · no remote server</span>
+    <a id="repo" data-href="https://github.com/leeguooooo/agent-browser-stealth">GitHub ↗</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
