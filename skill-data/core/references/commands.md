@@ -330,8 +330,19 @@ One-time setup:
 ```bash
 agent-browser extension install        # writes the native-messaging host manifest
 ```
-Then load the extension **once** — this is a GUI step (Chrome's `chrome://extensions`
-is privileged; the CLI can't load an unpacked extension):
+
+The native-messaging host accepts **both** extension origins, so the extension
+can be installed either way:
+
+1. **Load unpacked (works today)** — load `<repo>/extensions/ab-connect` from
+   source; its pinned `key` gives the stable id `ciiljdlhd…`.
+2. **Chrome Web Store (once published)** — one-click *Add to Chrome*; the store
+   strips the `key` and assigns its own id (`knfcmbamhjmaonkfnjhldjedeobeafmk`),
+   which `connect.rs` also allow-lists. (Submitted for review; until it's live,
+   use Load unpacked.)
+
+For Load unpacked — a GUI step (Chrome's `chrome://extensions` is privileged; the
+CLI can't load an unpacked extension):
 
 > chrome://extensions → enable **Developer mode** (top-right) → **Load unpacked** →
 > select `<repo>/extensions/ab-connect` (it appears in the list as
