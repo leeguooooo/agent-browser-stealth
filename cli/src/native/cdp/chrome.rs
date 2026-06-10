@@ -773,6 +773,26 @@ fn running_process_cmdlines() -> Option<Vec<String>> {
 }
 
 pub async fn auto_connect_cdp() -> Result<String, String> {
+    // Prefer the dialog-free `ab-connect` extension relay when it is live.
+    // The relay drives the user's REAL Chrome via the extension's
+    // `chrome.debugger` permission, which — unlike a raw `--remote-debugging-port`
+    // CDP attach — never triggers Chrome 136+'s per-connection
+    // "Allow remote debugging?" consent modal. The native-messaging host writes
+    // ~/.agent-browser/relay-cdp-url while connected and removes it on exit, so a
+    // present URL means the relay is up. This must win over the DevToolsActivePort
+    // / :9222 probes below: if the user's Chrome happens to also be listening on a
+    // debug port, attaching there would pop the consent dialog and defeat the
+    // whole zero-interaction extension path.
+    if let Some(relay) = crate::connect::relay_url() {
+        // The relay is a local CDP-over-WS endpoint we connect to like Chrome.
+        // A bare TCP liveness check (no WS upgrade) confirms it is actually
+        // accepting before we commit, mirroring the consent-free probe used for
+        // DevToolsActivePort.
+        if relay_is_live(&relay).await {
+            return Ok(relay);
+        }
+    }
+
     let user_data_dirs = get_chrome_user_data_dirs();
 
     for dir in &user_data_dirs {
@@ -848,6 +868,22 @@ async fn tcp_port_alive(port: u16) -> bool {
         .await,
         Ok(Ok(_))
     )
+}
+
+/// Consent-free liveness for the `ab-connect` relay ws URL (`ws://127.0.0.1:<port>/…`).
+/// Parses the port and does a bare TCP connect — a stale relay-cdp-url file
+/// (host exited without cleanup) must not divert auto-connect away from the
+/// working port path.
+async fn relay_is_live(ws_url: &str) -> bool {
+    let port = ws_url
+        .strip_prefix("ws://")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|hostport| hostport.rsplit(':').next())
+        .and_then(|p| p.parse::<u16>().ok());
+    match port {
+        Some(p) => tcp_port_alive(p).await,
+        None => false,
+    }
 }
 
 /// Returns the default Chrome user-data directory paths for the current platform.
@@ -2199,5 +2235,36 @@ mod tests {
 
         let result = resolve_cdp_from_active_port(port, "/devtools/browser/dead").await;
         assert!(result.is_err(), "should fail when nothing is listening");
+    }
+
+    #[tokio::test]
+    async fn test_relay_is_live_true_when_listening() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url = format!("ws://127.0.0.1:{}/abc-guid", port);
+        assert!(
+            relay_is_live(&url).await,
+            "relay_is_live should be true while the port is accepting"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_relay_is_live_false_when_dead() {
+        // Bind to grab a free port, then drop so nothing is listening.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let url = format!("ws://127.0.0.1:{}/abc-guid", port);
+        assert!(
+            !relay_is_live(&url).await,
+            "relay_is_live must be false for a stale relay-cdp-url (host exited)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_relay_is_live_false_on_malformed_url() {
+        assert!(!relay_is_live("not-a-ws-url").await);
+        assert!(!relay_is_live("ws://127.0.0.1/no-port").await);
+        assert!(!relay_is_live("ws://127.0.0.1:notaport/x").await);
     }
 }

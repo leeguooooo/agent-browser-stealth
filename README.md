@@ -1,10 +1,14 @@
 # agent-browser-stealth
 
+![agent-browser-stealth](assets/hero.png)
+
 Stealth fork of [agent-browser](https://github.com/vercel-labs/agent-browser) — connects to your real Chrome, shares your login sessions, and is undetectable by anti-bot systems.
 
 For basic usage, commands, and API reference, see the [upstream documentation](https://github.com/vercel-labs/agent-browser).
 
 ## Why this fork?
+
+<img src="assets/fingerprint.png" alt="real but undetectable fingerprint" width="300" align="right" />
 
 **agent-browser** launches a fresh browser with an empty profile. You need to log in again, and websites can detect it's automated.
 
@@ -115,6 +119,8 @@ In CI environments, standalone mode is used automatically.
 
 ## Anti-detection
 
+<img src="assets/shield.png" alt="stealth shield" width="320" align="right" />
+
 When connected to your real Chrome, we inject **zero** JavaScript patches. Your browser's fingerprint is completely genuine. The guiding rule is **native CDP/Chrome overrides over JS lies** — a re-defined getter is itself detectable; a native override isn't.
 
 - `navigator.webdriver = false` via `Emulation.setAutomationOverride` (native, undetectable by CreepJS-style lie tests).
@@ -124,11 +130,27 @@ When connected to your real Chrome, we inject **zero** JavaScript patches. Your 
 
 | Test site | Result |
 |---|---|
-| [CreepJS](https://abrahamjuliot.github.io/creepjs/) | 0% stealth, 0% headless |
-| [bot.sannysoft.com](https://bot.sannysoft.com) | All green |
-| [Cloudflare Turnstile](https://nowsecure.nl) | Passed |
+| [CreepJS](https://abrahamjuliot.github.io/creepjs/) | **0% stealth · 0% headless** (no override traces at all) |
+| [bot.incolumitas.com](https://bot.incolumitas.com/) | all checks OK — `overflowTest`, `overrideTest`, `puppeteerExtraStealthUsed`, worker consistency |
+| [bot.sannysoft.com](https://bot.sannysoft.com) | all green |
+| [BrowserScan](https://www.browserscan.net/bot-detection) | Webdriver · User-Agent · CDP all clean |
+| [Cloudflare Turnstile](https://nowsecure.nl) | passed |
 
-When using `--launch` mode (standalone browser), a full suite of 32 stealth patches is applied for headless Chrome.
+`0% stealth` on CreepJS is the key number: because the connect path patches **nothing**, there is no override for a lie-detector to catch. (Dashboards that read `navigator.languages` order or IP geolocation may show a soft "navigator"/"location" flag — that tracks *your real Chrome's* language list and network, not an automation tell.)
+
+When using `--launch` mode (standalone browser), a full suite of stealth patches is applied instead, and it still passes the suite above.
+
+### Verify it yourself
+
+Don't take our word for it — point your connected Chrome at the toughest public detectors and compare:
+
+- **[CreepJS](https://abrahamjuliot.github.io/creepjs/)** — the most thorough fingerprint / lie detector
+- **[bot.incolumitas.com](https://bot.incolumitas.com/)** — behavioral + fingerprint scoring with a public methodology
+- **[BrowserScan](https://www.browserscan.net/bot-detection)** — Webdriver / User-Agent / CDP / Navigator
+- **[bot.sannysoft.com](https://bot.sannysoft.com)** — the classic automation-marker checklist
+- **[pixelscan.net](https://pixelscan.net/)** · **[iphey.com](https://iphey.com/)** — consistency & identity
+
+We deliberately **don't ship our own bot detector** — the strongest, most honest benchmark is the market's best detectors run against your real browser.
 
 ### Tuning knobs (environment variables)
 

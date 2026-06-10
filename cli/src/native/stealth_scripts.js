@@ -394,6 +394,24 @@ const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLCon
   defineVendor(navigator);
 })();
 (function(){
+  // Native > JS lies: a real headed Chrome already exposes the correct, fully
+  // native navigator.plugins (5 PDF-viewer aliases, a native item() that does
+  // the WebIDL uint32-index wrap, length on the prototype). Overriding that
+  // with a JS fake is strictly worse — it ships a non-native item() whose
+  // .toString() reveals the patch, breaks the uint32 wrap (incolumitas
+  // overflowTest), and pins an anachronistic "Native Client" plugin that modern
+  // Chrome removed. Since this fork forbids headless and always launches headed,
+  // the native plugins are present, so we leave them alone. We only fall back to
+  // a synthetic list when native plugins are genuinely empty (e.g. the
+  // discouraged AGENT_BROWSER_ALLOW_HEADLESS escape on old headless).
+  try {
+    const np = navigator.plugins;
+    const itemNative =
+      np && typeof np.item === 'function' &&
+      /\[native code\]/.test(Function.prototype.toString.call(np.item));
+    if (np && np.length > 0 && itemNative) return;
+  } catch (e) {}
+
   const makeMimeType = (type, suffixes, description) => {
     const mime = Object.create(MimeType.prototype);
     Object.defineProperties(mime, {
@@ -427,40 +445,54 @@ const __abStealth = { locale: "en-US", languages: ["en-US", "en"], allowWebGLCon
     return plugin;
   };
 
+  // Make a fake method masquerade as native: name + `[native code]` toString.
+  const maskNative = (fn, name) => {
+    Object.defineProperty(fn, 'name', { value: name, configurable: true });
+    Object.defineProperty(fn, 'toString', {
+      value: () => `function ${name}() { [native code] }`,
+      configurable: true,
+      writable: true,
+    });
+    return fn;
+  };
+
+  // Modern Chrome (since ~v109) exposes exactly these 5 PDF-viewer aliases and
+  // two mimeTypes (application/pdf, text/pdf). Native Client was removed years
+  // ago, so it must NOT appear. Each plugin carries both mimeTypes.
   const pdfMime = makeMimeType('application/pdf', 'pdf', 'Portable Document Format');
-  const chromePdfMime = makeMimeType(
-    'application/x-google-chrome-pdf',
-    'pdf',
-    'Portable Document Format'
-  );
-  const naclMime = makeMimeType('application/x-nacl', '', 'Native Client Executable');
-  const pnaclMime = makeMimeType('application/x-pnacl', '', 'Portable Native Client Executable');
+  const textPdfMime = makeMimeType('text/pdf', 'pdf', 'Portable Document Format');
+  const mimes = [pdfMime, textPdfMime];
 
   const plugins = [
-    makePlugin('Chrome PDF Plugin', 'Portable Document Format', 'internal-pdf-viewer', [chromePdfMime]),
-    makePlugin('Chrome PDF Viewer', '', 'mhjfbmdgcfjbbpaeojofohoefgiehjai', [pdfMime]),
-    makePlugin('Native Client', '', 'internal-nacl-plugin', [naclMime, pnaclMime]),
-  ];
+    'PDF Viewer',
+    'Chrome PDF Viewer',
+    'Chromium PDF Viewer',
+    'Microsoft Edge PDF Viewer',
+    'WebKit built-in PDF',
+  ].map((name) => makePlugin(name, 'Portable Document Format', 'internal-pdf-viewer', mimes));
+
   const pluginArray = Object.create(PluginArray.prototype);
   plugins.forEach((p, i) => {
     pluginArray[i] = p;
     pluginArray[p.name] = p;
   });
   Object.defineProperty(pluginArray, 'length', { get: () => plugins.length });
-  pluginArray.item = (i) => plugins[i] || null;
-  pluginArray.namedItem = (name) => plugins.find(p => p.name === name) || null;
-  pluginArray.refresh = () => {};
+  // `i >>> 0` replicates the WebIDL unsigned-long index coercion, so
+  // item(2**32) wraps to item(0) like the real native PluginArray.item.
+  pluginArray.item = maskNative((i) => plugins[i >>> 0] || null, 'item');
+  pluginArray.namedItem = maskNative((name) => plugins.find(p => p.name === name) || null, 'namedItem');
+  pluginArray.refresh = maskNative(() => {}, 'refresh');
   pluginArray[Symbol.iterator] = function*() { for (const p of plugins) yield p; };
 
-  const mimeTypes = [chromePdfMime, pdfMime, naclMime, pnaclMime];
+  const mimeTypes = [pdfMime, textPdfMime];
   const mimeTypeArray = Object.create(MimeTypeArray.prototype);
   mimeTypes.forEach((m, i) => {
     mimeTypeArray[i] = m;
     mimeTypeArray[m.type] = m;
   });
   Object.defineProperty(mimeTypeArray, 'length', { get: () => mimeTypes.length });
-  mimeTypeArray.item = (i) => mimeTypes[i] || null;
-  mimeTypeArray.namedItem = (name) => mimeTypes.find(m => m.type === name) || null;
+  mimeTypeArray.item = maskNative((i) => mimeTypes[i >>> 0] || null, 'item');
+  mimeTypeArray.namedItem = maskNative((name) => mimeTypes.find(m => m.type === name) || null, 'namedItem');
   mimeTypeArray[Symbol.iterator] = function*() { for (const m of mimeTypes) yield m; };
 
   Object.defineProperty(navigator, 'plugins', {

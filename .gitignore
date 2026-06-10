@@ -38,6 +38,10 @@ __pycache__/
 *.webm
 test/e2e/.dogfood-output/
 
+# ...but these are real repo assets, not test artifacts — keep them tracked
+!assets/*.png
+!extensions/ab-connect/icons/*.png
+
 # Package manager
 package-lock.json
 yarn.lock
