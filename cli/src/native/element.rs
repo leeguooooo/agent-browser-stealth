@@ -845,6 +845,12 @@ async fn resolve_by_selector(
         )
         .await?;
 
+    // A syntactically-invalid CSS selector makes querySelector throw — surface
+    // that as "invalid selector" rather than a misleading "element not found".
+    if let Some(ex) = result.exception_details {
+        return Err(format!("Invalid selector '{}': {}", selector, ex.text));
+    }
+
     let val = result.result.value.unwrap_or(Value::Null);
     let x = val.get("x").and_then(|v| v.as_f64());
     let y = val.get("y").and_then(|v| v.as_f64());

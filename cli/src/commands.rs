@@ -548,6 +548,14 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                         context: "wait --url".to_string(),
                         usage: "wait --url <pattern>",
                     })?;
+                if url.is_empty() {
+                    return Err(ParseError::InvalidValue {
+                        message: "wait --url needs a non-empty pattern (an empty pattern would \
+                                  match any URL)."
+                            .to_string(),
+                        usage: "wait --url <pattern>",
+                    });
+                }
                 let mut cmd = json!({ "id": id, "action": "waitforurl", "url": url });
                 // Parse --timeout (without it the default applies — and a
                 // non-matching pattern would otherwise wait the full default).
@@ -3809,6 +3817,15 @@ mod tests {
         let cmd = parse_command(&args("wait --url **/dashboard"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "waitforurl");
         assert_eq!(cmd["url"], "**/dashboard");
+    }
+
+    #[test]
+    fn test_wait_url_empty_pattern_rejected() {
+        // An empty pattern would match any URL — reject it rather than silently
+        // always-match. (Build argv directly: split_whitespace can't yield "".)
+        let argv = vec!["wait".to_string(), "--url".to_string(), String::new()];
+        let err = parse_command(&argv, &default_flags());
+        assert!(err.is_err(), "empty --url pattern should be rejected");
     }
 
     #[test]
