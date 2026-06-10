@@ -35,7 +35,10 @@ fn build_doctor_cmd(tmp: &TempDir, args: &[&str]) -> Command {
 // main suite passes on Windows; this is the one binary-spawning doctor check
 // that hangs there. Skip it on Windows until the Windows doctor exit/pipe
 // behavior is fixed; it still runs on Linux/macOS.
-#[cfg_attr(windows, ignore = "doctor --offline hangs on Windows under captured stdout")]
+#[cfg_attr(
+    windows,
+    ignore = "doctor --offline hangs on Windows under captured stdout"
+)]
 #[test]
 fn doctor_offline_quick_json_emits_valid_payload() {
     let tmp = TempDir::new().unwrap();
