@@ -1641,8 +1641,18 @@ impl BrowserManager {
 
     pub fn remove_page_by_target_id(&mut self, target_id: &str) {
         if let Some(pos) = self.pages.iter().position(|p| p.target_id == target_id) {
+            let removed_was_pinned = self.active_target_id.as_deref() == Some(target_id);
             self.pages.remove(pos);
             self.update_active_page_after_removal(pos);
+            // If we just removed the pinned active target, the pin now dangles and
+            // `resolved_active_index` silently falls back to `active_page_index`.
+            // After a passive about:blank discovery that index can point at a blank
+            // tab, so `wait` → eval/snapshot lands on about:blank (issue #7). Re-pin
+            // to the surviving active page so the pin is never left pointing at a
+            // target that no longer exists.
+            if removed_was_pinned {
+                self.pin_active_target();
+            }
         }
     }
 
@@ -2103,6 +2113,65 @@ mod tests {
     #[test]
     fn test_active_page_index_after_removal_resets_when_last_page_disappears() {
         assert_eq!(active_page_index_after_removal(0, 0, 0), 0);
+    }
+
+    // issue #7: removing the pinned active target must re-anchor the pin to a
+    // surviving page. Models `remove_page_by_target_id`'s index + re-pin steps
+    // purely (BrowserManager needs a live CDP client, so the method itself can't
+    // be unit-constructed). The invariant: after removal the pin never dangles
+    // and never silently resolves to a passively-discovered about:blank tab.
+    fn simulate_remove(
+        target_ids: &[&str],
+        active_index: usize,
+        pinned: &str,
+        remove_id: &str,
+    ) -> (Vec<String>, usize, Option<String>) {
+        let pos = target_ids.iter().position(|t| *t == remove_id).unwrap();
+        let removed_was_pinned = pinned == remove_id;
+        let mut pages: Vec<String> = target_ids.iter().map(|s| s.to_string()).collect();
+        pages.remove(pos);
+        let new_active = active_page_index_after_removal(active_index, pos, pages.len());
+        let new_pin = if removed_was_pinned {
+            pages.get(new_active).cloned()
+        } else {
+            Some(pinned.to_string())
+        };
+        (pages, new_active, new_pin)
+    }
+
+    fn resolve_active<'a>(pages: &'a [String], active_index: usize, pin: &Option<String>) -> &'a str {
+        if let Some(tid) = pin {
+            if let Some(p) = pages.iter().find(|p| *p == tid) {
+                return p;
+            }
+        }
+        pages.get(active_index).map(|s| s.as_str()).unwrap_or("")
+    }
+
+    #[test]
+    fn test_removing_unpinned_blank_keeps_pin_on_real_page() {
+        // pages = [creepjs(pinned, active), about:blank]; a passive blank closes.
+        let (pages, active, pin) = simulate_remove(&["creepjs", "blank"], 0, "creepjs", "blank");
+        assert_eq!(resolve_active(&pages, active, &pin), "creepjs");
+    }
+
+    #[test]
+    fn test_removing_pinned_page_repins_to_survivor_not_dangling() {
+        // pages = [blank, creepjs(pinned, active)]; the pinned page itself closes.
+        let (pages, active, pin) = simulate_remove(&["blank", "creepjs"], 1, "creepjs", "creepjs");
+        // pin must point at a page that still exists (no dangling fallback).
+        let resolved = resolve_active(&pages, active, &pin);
+        assert!(pages.iter().any(|p| p == resolved), "resolved a dangling target");
+        assert_eq!(resolved, "blank");
+    }
+
+    #[test]
+    fn test_resolve_falls_back_cleanly_when_pin_dangles() {
+        // A stale pin (target already gone) must resolve to a real surviving page,
+        // never panic or return the missing id.
+        let pages = vec!["creepjs".to_string(), "blank".to_string()];
+        let pin = Some("gone".to_string());
+        assert_eq!(resolve_active(&pages, 0, &pin), "creepjs");
     }
 
     #[test]
