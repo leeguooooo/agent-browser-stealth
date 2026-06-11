@@ -1143,6 +1143,20 @@ async fn wait_for_paint_settled(client: &CdpClient, session_id: &str) {
     .await;
 }
 
+/// Click at a raw viewport coordinate, bypassing element/selector resolution
+/// (issue #8.4 first-class coordinate click). Honors the humanize trajectory and
+/// press dwell exactly like a selector click — it shares `dispatch_click`.
+pub async fn click_at_point(
+    client: &CdpClient,
+    session_id: &str,
+    x: f64,
+    y: f64,
+    button: &str,
+    click_count: i32,
+) -> Result<(), String> {
+    dispatch_click(client, session_id, x, y, button, click_count).await
+}
+
 async fn dispatch_click(
     client: &CdpClient,
     session_id: &str,

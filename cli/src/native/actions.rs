@@ -2986,6 +2986,20 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
 }
 
 async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
+    // First-class coordinate click (issue #8.4): click a raw viewport point with
+    // no element resolution. Parsed from `click <x> <y>` / `click --coords x,y`.
+    if let (Some(x), Some(y)) = (
+        cmd.get("x").and_then(|v| v.as_f64()),
+        cmd.get("y").and_then(|v| v.as_f64()),
+    ) {
+        let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+        let session_id = mgr.active_session_id()?.to_string();
+        let button = cmd.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+        let click_count = cmd.get("clickCount").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+        interaction::click_at_point(&mgr.client, &session_id, x, y, button, click_count).await?;
+        return Ok(json!({ "clicked": { "x": x, "y": y } }));
+    }
+
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())

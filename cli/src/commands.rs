@@ -375,12 +375,25 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
         // === Core Actions ===
         "click" => {
             let new_tab = rest.contains(&"--new-tab");
+            // Coordinate click as a first-class form (issue #8.4): when the only
+            // handle is a pixel position, no element/selector is needed.
+            //   click <x> <y>          e.g. click 449 320
+            //   click <x>,<y>          e.g. click 449,320
+            //   click --coords <x>,<y> | --coords <x> <y>
+            let coord_args: Vec<&str> = rest
+                .iter()
+                .copied()
+                .filter(|a| *a != "--new-tab" && *a != "--coords")
+                .collect();
+            if let Some((x, y)) = parse_coords(&coord_args) {
+                return Ok(json!({ "id": id, "action": "click", "x": x, "y": y }));
+            }
             let sel = rest
                 .iter()
                 .find(|arg| **arg != "--new-tab")
                 .ok_or_else(|| ParseError::MissingArguments {
                     context: "click".to_string(),
-                    usage: "click <selector> [--new-tab]",
+                    usage: "click <selector> | click <x> <y> | click --coords <x>,<y> [--new-tab]",
                 })?;
             if new_tab {
                 Ok(json!({ "id": id, "action": "click", "selector": sel, "newTab": true }))
@@ -1208,6 +1221,15 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             parse_get(&get_args, &id)
         }
 
+        // Hyphen/underscore aliases for `get text <selector>` — agents naturally
+        // guess `get-text` / `get_text` (issue #8.4).
+        "get-text" | "get_text" => {
+            let mut get_args: Vec<&str> = Vec::with_capacity(rest.len() + 1);
+            get_args.push("text");
+            get_args.extend_from_slice(&rest);
+            parse_get(&get_args, &id)
+        }
+
         // === Is (state checks) ===
         "is" => parse_is(&rest, &id),
 
@@ -1389,7 +1411,9 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
         }
 
         // === Tabs ===
-        "tab" => {
+        // `tabs` (plural) is a natural guess for the `tab` subcommand tree —
+        // alias it so `tabs` / `tabs list` / `tabs new` all work (issue #8.4).
+        "tab" | "tabs" => {
             match rest.first().copied() {
                 Some("new") => {
                     // Accepted forms:
@@ -2313,19 +2337,6 @@ fn parse_is(rest: &[&str], id: &str) -> Result<Value, ParseError> {
 }
 
 fn parse_find(rest: &[&str], id: &str) -> Result<Value, ParseError> {
-    const VALID: &[&str] = &[
-        "role",
-        "text",
-        "label",
-        "placeholder",
-        "alt",
-        "title",
-        "testid",
-        "first",
-        "last",
-        "nth",
-    ];
-
     let locator = rest.first().ok_or_else(|| ParseError::MissingArguments {
         context: "find".to_string(),
         usage: "find <locator> <value> [action] [text]",
@@ -2495,11 +2506,35 @@ fn parse_find(rest: &[&str], id: &str) -> Result<Value, ParseError> {
             }
             Ok(cmd)
         }
-        _ => Err(ParseError::UnknownSubcommand {
-            subcommand: locator.to_string(),
-            valid_options: VALID,
+        _ => Err(ParseError::InvalidValue {
+            // The user passed a value where a locator keyword was expected — the
+            // classic `find "I'm not a robot" click` mistake (issue #8.4). Lead
+            // with the corrected command using their own value, then the menu.
+            message: format!(
+                "`{loc}` is not a find locator. To match by visible text, name the locator:\n  \
+                 agent-browser find text \"{loc}\" click\n\n\
+                 Locators: role, text, label, placeholder, alt, title, testid, first, last, nth\n\
+                 Examples:\n  \
+                 agent-browser find text \"Sign in\" click\n  \
+                 agent-browser find role button --name \"Submit\" click\n  \
+                 agent-browser find label \"Email\" fill you@example.com",
+                loc = locator,
+            ),
+            usage: "find <locator> <value> [action] [text]",
         }),
     }
+}
+
+/// Parse a coordinate pair from `["449","320"]`, `["449,320"]`, or `["449, 320"]`.
+/// Returns None if the args aren't a clean numeric pair (so callers fall back to
+/// treating the argument as a selector). Used by first-class coordinate `click`.
+fn parse_coords(args: &[&str]) -> Option<(f64, f64)> {
+    let (a, b) = match args {
+        [one] => one.split_once(',')?,
+        [a, b] => (*a, *b),
+        _ => return None,
+    };
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
 }
 
 fn parse_mouse(rest: &[&str], id: &str) -> Result<Value, ParseError> {
@@ -3548,6 +3583,79 @@ mod tests {
     fn test_reload() {
         let cmd = parse_command(&args("reload"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "reload");
+    }
+
+    // === issue #8.4: CLI ergonomics ===
+
+    #[test]
+    fn test_click_coords_two_args() {
+        let cmd = parse_command(&args("click 449 320"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "click");
+        assert_eq!(cmd["x"], 449.0);
+        assert_eq!(cmd["y"], 320.0);
+        assert!(cmd.get("selector").is_none());
+    }
+
+    #[test]
+    fn test_click_coords_comma() {
+        let cmd = parse_command(&args("click 449,320"), &default_flags()).unwrap();
+        assert_eq!(cmd["x"], 449.0);
+        assert_eq!(cmd["y"], 320.0);
+    }
+
+    #[test]
+    fn test_click_coords_flag() {
+        let cmd = parse_command(&args("click --coords 449,320"), &default_flags()).unwrap();
+        assert_eq!(cmd["x"], 449.0);
+        assert_eq!(cmd["y"], 320.0);
+    }
+
+    #[test]
+    fn test_click_selector_not_coords() {
+        let cmd = parse_command(&args("click button.submit"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "click");
+        assert_eq!(cmd["selector"], "button.submit");
+        assert!(cmd.get("x").is_none());
+    }
+
+    #[test]
+    fn test_tabs_alias_lists() {
+        assert_eq!(
+            parse_command(&args("tabs"), &default_flags()).unwrap()["action"],
+            "tab_list"
+        );
+        assert_eq!(
+            parse_command(&args("tabs list"), &default_flags()).unwrap()["action"],
+            "tab_list"
+        );
+        assert_eq!(
+            parse_command(&args("tabs new"), &default_flags()).unwrap()["action"],
+            "tab_new"
+        );
+    }
+
+    #[test]
+    fn test_get_text_hyphen_and_underscore_aliases() {
+        for verb in ["get-text", "get_text"] {
+            let cmd = parse_command(&args(&format!("{verb} .price")), &default_flags()).unwrap();
+            assert_eq!(cmd["action"], "gettext", "{verb}");
+            assert_eq!(cmd["selector"], ".price", "{verb}");
+        }
+    }
+
+    #[test]
+    fn test_find_bare_value_suggests_text_locator() {
+        // `find "I'm not a robot" click` — value where a locator keyword was
+        // expected. Error must steer to the corrected `find text ...` form.
+        let input: Vec<String> = vec![
+            "find".to_string(),
+            "I'm not a robot".to_string(),
+            "click".to_string(),
+        ];
+        let err = parse_command(&input, &default_flags()).unwrap_err();
+        let msg = err.format();
+        assert!(msg.contains("find text"), "got: {msg}");
+        assert!(msg.contains("I'm not a robot"), "got: {msg}");
     }
 
     // === Core Actions ===
