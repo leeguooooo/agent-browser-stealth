@@ -182,13 +182,16 @@ Snapshot output looks like:
 Page: Example - Log in
 URL: https://example.com/login
 
-@e1 [heading] "Log in"
-@e2 [form]
-  @e3 [input type="email"] placeholder="Email"
-  @e4 [input type="password"] placeholder="Password"
-  @e5 [button type="submit"] "Continue"
-  @e6 [link] "Forgot password?"
+- heading "Log in" [level=1, ref=e1]
+- textbox "Email" [ref=e2]
+- textbox "Password" [ref=e3]
+- button "Continue" [ref=e4]
+- link "Forgot password?" [ref=e5]
 ```
+
+Each line is `- <role> "<accessible name>" [<attrs>, ref=eN]`, indented by nesting
+depth. You pass the ref to commands as `@eN` (e.g. `click @e4`). Refs are
+assigned fresh on every snapshot.
 
 For unstructured reading (no refs needed):
 
@@ -386,9 +389,16 @@ Array.from(rows).map(r => ({
 EOF
 ```
 
-Prefer `eval --stdin` (heredoc) or `eval -b <base64>` for any JS with
-quotes or special characters. Inline `agent-browser eval "..."` works
-only for simple expressions.
+Prefer `eval --stdin` (heredoc), `eval --file <path>`, or `eval -b <base64>`
+for any JS with quotes, **non-ASCII identifiers/strings (e.g. Chinese)**, or
+large scripts — inline `agent-browser eval "..."` is shell-mangled and works
+only for simple ASCII expressions.
+
+**`eval` runs in the page's MAIN world and state persists across calls**, so a
+top-level `const x`/`let x`/`var x` in one call collides with the next
+(`SyntaxError: Identifier 'x' has already been declared`). Either use unique
+names, assign to `window.x`, or wrap the body in an IIFE
+(`(() => { const x = …; return x; })()`).
 
 ### Screenshot
 

@@ -841,17 +841,31 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
 
         // === Eval ===
         "eval" => {
-            // Check for flags: -b/--base64 or --stdin
-            let (is_base64, is_stdin, script_parts): (bool, bool, &[&str]) =
+            // Check for flags: -b/--base64, --stdin, or --file <path>
+            let (is_base64, is_stdin, is_file, script_parts): (bool, bool, bool, &[&str]) =
                 if rest.first() == Some(&"-b") || rest.first() == Some(&"--base64") {
-                    (true, false, &rest[1..])
+                    (true, false, false, &rest[1..])
                 } else if rest.first() == Some(&"--stdin") {
-                    (false, true, &rest[1..])
+                    (false, true, false, &rest[1..])
+                } else if rest.first() == Some(&"--file") {
+                    (false, false, true, &rest[1..])
                 } else {
-                    (false, false, rest.as_slice())
+                    (false, false, false, rest.as_slice())
                 };
 
-            let script = if is_stdin {
+            let script = if is_file {
+                // Read the script from a file. Avoids shell-mangling of inline JS
+                // (non-ASCII identifiers/strings, quotes, large scripts) — the file
+                // is read as UTF-8 and sent verbatim.
+                let path = script_parts.first().ok_or(ParseError::InvalidValue {
+                    message: "eval --file requires a path".to_string(),
+                    usage: "eval --file <path>",
+                })?;
+                std::fs::read_to_string(path).map_err(|e| ParseError::InvalidValue {
+                    message: format!("eval --file: cannot read {path}: {e}"),
+                    usage: "eval --file <path>",
+                })?
+            } else if is_stdin {
                 // Read script from stdin
                 let stdin = io::stdin();
                 let lines: Vec<String> = stdin

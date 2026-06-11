@@ -130,6 +130,20 @@ fn format_stream_status_text(action: Option<&str>, data: &serde_json::Value) -> 
     }
 }
 
+/// Shorten an over-long string by keeping its head and tail and eliding the
+/// middle, with a char count. Used so multi-KB URLs (JWT/OTP login links) don't
+/// flood `tab list`.
+fn truncate_middle(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let keep = max.saturating_sub(1) / 2;
+    let head: String = s.chars().take(keep).collect();
+    let tail: String = s.chars().skip(n - keep).collect();
+    format!("{head}…{tail} [{n} chars]")
+}
+
 pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &OutputOptions) {
     if opts.json {
         if opts.content_boundaries {
@@ -422,6 +436,9 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                     .and_then(|v| v.as_str())
                     .unwrap_or("Untitled");
                 let url = tab.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                // Truncate very long URLs (e.g. multi-KB JWT/OTP login links) so
+                // the list stays readable instead of flooding the terminal.
+                let url = truncate_middle(url, 120);
                 let active = tab.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
                 let marker = if active {
                     color::cyan("→")
