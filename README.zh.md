@@ -8,9 +8,20 @@
 
 基础用法、命令与 API 参考见[上游文档](https://github.com/vercel-labs/agent-browser)。
 
-## 为什么不用 Claude 的 Chrome 插件、web-access 或 Playwright？
+## 把你**已经登录好**的浏览器，交给你的 AI agent
 
-每个同类方案只解决了问题的**一部分**。agent-browser-stealth 是唯一全做到的 —— **驱动你自己已登录的 Chrome、任意工具都能调、不弹同意框、不可检测、还能多 agent 并发。**
+**不用开新 Chrome。不用重新登录。不用跟"你是不是机器人"较劲。**
+
+agent-browser-stealth 让**任意** agent（Claude Code、Cursor、Codex、你自己的脚本）直接操作你**已经登录了所有网站**的那个 Chrome。它在**你的窗口里**点击，你看着它干活，撞到 2FA / 验证码的瞬间你接管一下，它接着跑。因为它**就是你的真实浏览器**（一键装的扩展、原生消息、无调试端口），网站眼里它 100% 是人：**[CreepJS 实测 0% 机器人](#反检测)。**
+
+**为什么不用……**
+
+- **Playwright / Puppeteer / browser-use？** 它们开的是**空**浏览器 —— 每个登录你重做、每个验证码你硬扛、最后还被标成自动化。我们直接用你**现成的**会话。
+- **Claude 的 Chrome 插件？** 很好，但**只能给 Claude 用**。我们给**任意** agent / CLI 用。
+- **裸 `--remote-debugging-port`**（web-access 等）？ Chrome 136+ **每次连都弹** "Allow remote debugging?"。我们**永不弹** —— 商店一键装，原生消息。
+
+<details>
+<summary><b>完整对比矩阵</b>（要细节的看这里）</summary>
 
 | | [Claude in Chrome](https://www.anthropic.com/claude/chrome) | web-access / 裸 CDP 端口 | Playwright · Puppeteer · browser-use | **agent-browser-stealth** |
 |---|:---:|:---:|:---:|:---:|
@@ -22,9 +33,9 @@
 | 多 agent 共用**同一个**真实 Chrome、标签组隔离³ | ❌ 单 app | ⚠️ 共享 tab、无隔离 | ❌ 各开各的浏览器 | ✅ |
 | 权限面 | 16 个，含 `<all_urls>` | 完整 CDP | 完全控制 | **7 个，无 `<all_urls>`** |
 
-> 一句话：**Claude in Chrome** 很好，但只能给 Claude 用；**web-access / 裸 `--remote-debugging-port`** 每次连接都会弹 Chrome 136+ 的同意框；**Playwright/Puppeteer/browser-use** 启的是**全新**浏览器（没登录、带自动化标记、常 headless → 被识破）。agent-browser-stealth 直接开你**已经登录好**的那个 Chrome，走原生消息扩展，在检测站上读起来就是个 100% 真人浏览器。
->
-> <sub>¹ 三家"真实 Chrome"工具在 CreepJS 上都 ~0%（毕竟是真浏览器），我们的是实测过的。² rebrowser `runtimeEnableLeak` —— 我们的中继路径实测无泄漏；Claude in Chrome 未独立测试（—）。³ web-access 也能跑并行子 agent，但无每会话隔离；本工具每个 `--session` 拿到自己彩色、命令隔离的标签组。实测数字见 [反检测](#反检测)。</sub>
+<sub>¹ 三家"真实 Chrome"工具在 CreepJS 上都 ~0%（毕竟是真浏览器），我们的是实测过的。² rebrowser `runtimeEnableLeak` —— 我们的中继路径实测无泄漏；Claude in Chrome 未独立测试（—）。³ web-access 也能跑并行子 agent，但无每会话隔离；本工具每个 `--session` 拿到自己彩色、命令隔离的标签组。实测数字见 [反检测](#反检测)。</sub>
+
+</details>
 
 ## 为什么要 fork
 

@@ -8,9 +8,20 @@ Stealth fork of [agent-browser](https://github.com/vercel-labs/agent-browser) �
 
 For basic usage, commands, and API reference, see the [upstream documentation](https://github.com/vercel-labs/agent-browser).
 
-## Why not just use Claude's Chrome extension, web-access, or Playwright?
+## Give your AI agent the browser you already live in
 
-Each alternative solves *part* of the problem. agent-browser-stealth is the only one that does all of it — **drive your own logged-in Chrome, from any tool, with no consent popup, undetectably, and with many agents at once.**
+**No fresh Chrome. No re-login. No "are you a robot?" walls.**
+
+agent-browser-stealth points **any** agent — Claude Code, Cursor, Codex, your own scripts — at the **Chrome you're already signed into everything on**. It clicks in *your* window, so you watch it work and grab the wheel the moment it hits a 2FA prompt or captcha. And because it's literally your real browser (over a one-click extension, native messaging — no debug port), sites read it as 100% human: **[CreepJS scores it 0% bot](#anti-detection).**
+
+**Why not just use…**
+
+- **Playwright / Puppeteer / browser-use?** They boot an *empty* browser — so you redo every login, fight every captcha, and still get flagged as automation. We use the session you already have.
+- **Claude's Chrome extension?** Great, but it only drives Claude. This drives *any* agent or CLI.
+- **A raw `--remote-debugging-port`** (web-access, etc.)? Chrome 136+ pops **"Allow remote debugging?"** on *every* connect. This never does — one-click Store extension, native messaging.
+
+<details>
+<summary><b>Full feature comparison</b> (the receipts)</summary>
 
 | | [Claude in Chrome](https://www.anthropic.com/claude/chrome) | web-access / raw CDP port | Playwright · Puppeteer · browser-use | **agent-browser-stealth** |
 |---|:---:|:---:|:---:|:---:|
@@ -22,9 +33,9 @@ Each alternative solves *part* of the problem. agent-browser-stealth is the only
 | Many agents on **one** real Chrome, isolated tab groups³ | ❌ single app | ⚠️ shared tabs, no isolation | ❌ separate browsers | ✅ |
 | Permissions footprint | 16 incl. `<all_urls>` | full CDP | full control | **7, no `<all_urls>`** |
 
-> Short version: **Claude in Chrome** is great but locked to Claude; **web-access / raw `--remote-debugging-port`** pops Chrome 136+'s consent dialog on every attach; **Playwright/Puppeteer/browser-use** launch a *fresh* browser (no login, automation-flagged, often headless → detected). agent-browser-stealth drives the Chrome you're already signed into, over a native-messaging extension, and reads as a 100% real human browser.
->
-> <sub>¹ All three real-Chrome tools score ~0% on CreepJS (it's a real browser); we've measured ours. ² rebrowser's `runtimeEnableLeak` — verified clean on our relay path; Claude in Chrome not independently tested (—). ³ web-access can run parallel sub-agents on one browser, but without per-session isolation; each `--session` here gets its own colored, command-isolated tab group. See [Anti-detection](#anti-detection) for the measured numbers.</sub>
+<sub>¹ All three real-Chrome tools score ~0% on CreepJS (it's a real browser); we've measured ours. ² rebrowser's `runtimeEnableLeak` — verified clean on our relay path; Claude in Chrome not independently tested (—). ³ web-access can run parallel sub-agents on one browser, but without per-session isolation; each `--session` here gets its own colored, command-isolated tab group. See [Anti-detection](#anti-detection) for the measured numbers.</sub>
+
+</details>
 
 ## Why this fork?
 
