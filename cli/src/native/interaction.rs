@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::cdp::client::CdpClient;
 use super::cdp::types::*;
-use super::element::{resolve_element_center, resolve_element_object_id, RefMap};
+use super::element::{parse_ref, resolve_element_center, resolve_element_object_id, RefMap};
 use super::humanize;
 
 pub async fn click(
@@ -56,6 +56,33 @@ pub async fn click(
 
     match resolved {
         Ok((cx, cy, w, h, effective_session_id)) => {
+            // Occlusion guard for the CSS-selector path. `@ref` clicks are already
+            // occlusion-checked in resolve_element_center, but a plain selector
+            // resolves to coordinates without that check — so an overlay (modal
+            // backdrop, sticky banner, the getByText located node sitting under a
+            // full-screen layer) would make the coordinate click land on the
+            // overlay and still report success. If the click point doesn't hit the
+            // target, dispatch through the DOM instead (targets the element
+            // directly). Skipped for strict `coord` mode and non-left/multi-clicks.
+            if mode != "coord"
+                && button == "left"
+                && click_count == 1
+                && parse_ref(selector_or_ref).is_none()
+                && point_misses_element(client, &effective_session_id, selector_or_ref).await
+            {
+                eprintln!(
+                    "[click] target occluded at its click point; dispatching through \
+                     the DOM (set AGENT_BROWSER_CLICK_MODE=coord to disable)"
+                );
+                return dom_click(
+                    client,
+                    session_id,
+                    ref_map,
+                    selector_or_ref,
+                    iframe_sessions,
+                )
+                .await;
+            }
             // Land on a jittered point inside the element rather than its exact
             // centre (Fast/Human). Zero size or Off → exact centre.
             let (tx, ty) = humanize::landing_point(
@@ -89,6 +116,42 @@ pub async fn click(
             .await
             .map_err(|dom_err| format!("{e}\n(DOM-dispatch fallback also failed: {dom_err})"))
         }
+    }
+}
+
+/// True if a coordinate click at the selector's centre would land on something
+/// OTHER than the element (an overlay on top), i.e. the element is occluded.
+/// `false` when not occluded, the element is missing, or the probe fails (so we
+/// never block a click on a flaky probe — the normal coordinate path runs).
+async fn point_misses_element(client: &CdpClient, session_id: &str, selector: &str) -> bool {
+    let js = format!(
+        r#"(() => {{
+            const el = document.querySelector({sel});
+            if (!el) return false;
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return false;
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            if (!hit) return false;
+            // Not occluded if the hit is the element, a descendant, or an ancestor
+            // wrapper (clicking those still reaches the element's handlers).
+            return !(hit === el || el.contains(hit) || hit.contains(el));
+        }})()"#,
+        sel = serde_json::to_string(selector).unwrap_or_default()
+    );
+    match client
+        .send_command_typed::<_, EvaluateResult>(
+            "Runtime.evaluate",
+            &EvaluateParams {
+                expression: js,
+                return_by_value: Some(true),
+                await_promise: Some(false),
+            },
+            Some(session_id),
+        )
+        .await
+    {
+        Ok(r) => r.result.value.and_then(|v| v.as_bool()).unwrap_or(false),
+        Err(_) => false,
     }
 }
 
