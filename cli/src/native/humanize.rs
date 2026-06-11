@@ -277,6 +277,41 @@ pub fn move_path(
     out
 }
 
+/// Split a wheel scroll of (`total_dx`, `total_dy`) into eased segments. `Off`
+/// returns a single instant segment (today's one-shot scroll); `Fast`/`Human`
+/// break it into several accelerate-then-decelerate chunks with small,
+/// jittered inter-segment delays, the way a trackpad/wheel flick actually
+/// lands. The segment deltas always sum to the requested total.
+pub fn scroll_segments(
+    total_dx: f64,
+    total_dy: f64,
+    level: HumanizeLevel,
+    seed: u64,
+) -> Vec<(f64, f64, Duration)> {
+    if level.is_off() {
+        return vec![(total_dx, total_dy, Duration::ZERO)];
+    }
+    let (segs, base_ms) = match level {
+        HumanizeLevel::Fast => (4usize, 18.0),
+        _ => (9usize, 28.0),
+    };
+    let mut rng = Rng::new(seed);
+    let mut out = Vec::with_capacity(segs);
+    let mut prev = 0.0;
+    for i in 1..=segs {
+        let f = ease(i as f64 / segs as f64);
+        let frac = f - prev;
+        prev = f;
+        let jitter = 1.0 + 0.3 * rng.signed();
+        out.push((
+            total_dx * frac,
+            total_dy * frac,
+            Duration::from_millis((base_ms * jitter).max(4.0) as u64),
+        ));
+    }
+    out
+}
+
 /// Dwell between `mousePressed` and `mouseReleased` (a real click isn't
 /// instantaneous). Zero for `Off`.
 pub fn press_dwell(level: HumanizeLevel, seed: u64) -> Duration {
@@ -433,6 +468,23 @@ mod tests {
         let human = keystroke_delays(20, HumanizeLevel::Human, 3);
         assert_eq!(human.len(), 20);
         assert!(human.iter().all(|d| *d >= Duration::from_millis(8)));
+    }
+
+    #[test]
+    fn scroll_segments_sum_to_total_and_single_when_off() {
+        let off = scroll_segments(0.0, 600.0, HumanizeLevel::Off, 1);
+        assert_eq!(off.len(), 1);
+        assert_eq!((off[0].0, off[0].1), (0.0, 600.0));
+        assert_eq!(off[0].2, Duration::ZERO);
+
+        let human = scroll_segments(0.0, 600.0, HumanizeLevel::Human, 5);
+        assert!(human.len() >= 5);
+        let total_dy: f64 = human.iter().map(|s| s.1).sum();
+        assert!(
+            (total_dy - 600.0).abs() < 1e-6,
+            "segments must sum to total"
+        );
+        assert!(human.iter().all(|s| s.2 >= Duration::from_millis(4)));
     }
 
     #[test]

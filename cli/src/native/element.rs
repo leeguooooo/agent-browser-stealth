@@ -200,13 +200,17 @@ async fn relocate_stale_ref(
     }
 }
 
+/// Resolve a `@ref` or CSS selector to a click point. Returns
+/// `(centre_x, centre_y, width, height, session_id)`. Width/height come from the
+/// element's box model and feed humanize's in-bounds landing jitter; the CSS
+/// selector path returns zero size (→ land on centre, no jitter).
 pub async fn resolve_element_center(
     client: &CdpClient,
     session_id: &str,
     ref_map: &RefMap,
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
-) -> Result<(f64, f64, String), String> {
+) -> Result<(f64, f64, f64, f64, String), String> {
     if let Some(ref_id) = parse_ref(selector_or_ref) {
         let entry = ref_map
             .get(&ref_id)
@@ -263,7 +267,7 @@ pub async fn resolve_element_center(
                 .await;
 
             if let Ok(r) = result {
-                let (x, y) = box_model_center(&r.model);
+                let (x, y, w, h) = box_model_dims(&r.model);
                 // Occlusion check: a transient overlay (X.com's "click
                 // outside to close" mask, modal backdrop, sticky banner,
                 // etc.) can land on top of our target between snapshot
@@ -279,7 +283,7 @@ pub async fn resolve_element_center(
                     verify_click_target(client, effective_session_id, active_id, &ref_id, x, y)
                         .await?;
                 }
-                return Ok((x, y, effective_session_id.to_string()));
+                return Ok((x, y, w, h, effective_session_id.to_string()));
             }
             // backend_node_id is stale; re-query the accessibility tree below
         }
@@ -316,13 +320,14 @@ pub async fn resolve_element_center(
                 Some(effective_session_id),
             )
             .await?;
-        let (x, y) = box_model_center(&result.model);
-        return Ok((x, y, effective_session_id.to_string()));
+        let (x, y, w, h) = box_model_dims(&result.model);
+        return Ok((x, y, w, h, effective_session_id.to_string()));
     }
 
     // CSS selector
     let (x, y) = resolve_by_selector(client, session_id, selector_or_ref).await?;
-    Ok((x, y, session_id.to_string()))
+    // No box model on the CSS-selector fast path → zero size → land on centre.
+    Ok((x, y, 0.0, 0.0, session_id.to_string()))
 }
 
 pub async fn resolve_element_object_id(
@@ -869,6 +874,35 @@ fn box_model_center(model: &BoxModel) -> (f64, f64) {
         (x, y)
     } else {
         (0.0, 0.0)
+    }
+}
+
+/// Centre plus width/height of the content box, derived from the quad's
+/// bounding extent. Width/height feed humanize's in-bounds landing jitter; a
+/// degenerate quad yields zero size, which the jitter treats as "land on
+/// centre" (no jitter).
+fn box_model_dims(model: &BoxModel) -> (f64, f64, f64, f64) {
+    let (cx, cy) = box_model_center(model);
+    if model.content.len() >= 8 {
+        let xs = [
+            model.content[0],
+            model.content[2],
+            model.content[4],
+            model.content[6],
+        ];
+        let ys = [
+            model.content[1],
+            model.content[3],
+            model.content[5],
+            model.content[7],
+        ];
+        let w = xs.iter().cloned().fold(f64::MIN, f64::max)
+            - xs.iter().cloned().fold(f64::MAX, f64::min);
+        let h = ys.iter().cloned().fold(f64::MIN, f64::max)
+            - ys.iter().cloned().fold(f64::MAX, f64::min);
+        (cx, cy, w.max(0.0), h.max(0.0))
+    } else {
+        (cx, cy, 0.0, 0.0)
     }
 }
 

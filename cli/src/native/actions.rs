@@ -5513,19 +5513,29 @@ async fn handle_wheel(cmd: &Value, state: &DaemonState) -> Result<Value, String>
     let delta_x = cmd.get("deltaX").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let delta_y = cmd.get("deltaY").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-    mgr.client
-        .send_command(
-            "Input.dispatchMouseEvent",
-            Some(json!({
-                "type": "mouseWheel",
-                "x": x,
-                "y": y,
-                "deltaX": delta_x,
-                "deltaY": delta_y,
-            })),
-            Some(&session_id),
-        )
-        .await?;
+    // Humanize: at Off this is one instant wheel event (unchanged); at
+    // Fast/Human the scroll is split into eased, slightly-jittered segments so
+    // it ramps and settles like a real wheel/trackpad flick.
+    let level = humanize::active_level();
+    let seed = humanize::next_seed();
+    for (dx, dy, delay) in humanize::scroll_segments(delta_x, delta_y, level, seed) {
+        mgr.client
+            .send_command(
+                "Input.dispatchMouseEvent",
+                Some(json!({
+                    "type": "mouseWheel",
+                    "x": x,
+                    "y": y,
+                    "deltaX": dx,
+                    "deltaY": dy,
+                })),
+                Some(&session_id),
+            )
+            .await?;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
+    }
 
     Ok(json!({ "scrolled": true, "deltaX": delta_x, "deltaY": delta_y }))
 }
@@ -6522,7 +6532,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         .and_then(|v| v.as_str())
         .ok_or("Missing 'target' parameter")?;
 
-    let (sx, sy, source_session_id) = super::element::resolve_element_center(
+    let (sx, sy, _, _, source_session_id) = super::element::resolve_element_center(
         &mgr.client,
         &session_id,
         &state.ref_map,
@@ -6530,7 +6540,7 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         &state.iframe_sessions,
     )
     .await?;
-    let (tx, ty, target_session_id) = super::element::resolve_element_center(
+    let (tx, ty, _, _, target_session_id) = super::element::resolve_element_center(
         &mgr.client,
         &session_id,
         &state.ref_map,
@@ -6555,12 +6565,26 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
         )
         .await?;
 
-    // Move in steps to target, keeping the left button held (buttons: 1) so
-    // that the browser sees a drag rather than a plain pointer move.
-    let steps = 10;
-    for i in 1..=steps {
-        let cx = sx + (tx - sx) * (i as f64) / (steps as f64);
-        let cy = sy + (ty - sy) * (i as f64) / (steps as f64);
+    // Move to the target with the left button held (buttons: 1) so the browser
+    // sees a drag. At Off this is the original linear 10-step path; at
+    // Fast/Human it follows humanize's curved, decelerating trajectory.
+    let level = humanize::active_level();
+    let drag_path: Vec<(f64, f64, std::time::Duration)> =
+        if matches!(level, humanize::HumanizeLevel::Off) {
+            (1..=10)
+                .map(|i| {
+                    let cx = sx + (tx - sx) * (i as f64) / 10.0;
+                    let cy = sy + (ty - sy) * (i as f64) / 10.0;
+                    (cx, cy, std::time::Duration::from_millis(10))
+                })
+                .collect()
+        } else {
+            humanize::move_path((sx, sy), (tx, ty), level, humanize::next_seed())
+                .into_iter()
+                .map(|s| (s.x, s.y, s.delay))
+                .collect()
+        };
+    for (cx, cy, delay) in drag_path {
         mgr.client
             .send_command(
                 "Input.dispatchMouseEvent",
@@ -6568,7 +6592,9 @@ async fn handle_drag(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
                 Some(&target_session_id),
             )
             .await?;
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
     }
 
     // Mouse up at target

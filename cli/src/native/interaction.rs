@@ -55,8 +55,15 @@ pub async fn click(
     .await;
 
     match resolved {
-        Ok((x, y, effective_session_id)) => {
-            dispatch_click(client, &effective_session_id, x, y, button, click_count).await
+        Ok((cx, cy, w, h, effective_session_id)) => {
+            // Land on a jittered point inside the element rather than its exact
+            // centre (Fast/Human). Zero size or Off → exact centre.
+            let (tx, ty) = humanize::landing_point(
+                (cx - w / 2.0, cy - h / 2.0, w, h),
+                humanize::active_level(),
+                humanize::next_seed(),
+            );
+            dispatch_click(client, &effective_session_id, tx, ty, button, click_count).await
         }
         Err(e) => {
             // (B) The coordinate path failed — typically a persistent overlay
@@ -191,7 +198,7 @@ pub async fn hover(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session_id) = resolve_element_center(
+    let (x, y, _w, _h, effective_session_id) = resolve_element_center(
         client,
         session_id,
         ref_map,
@@ -999,7 +1006,7 @@ pub async fn tap_touch(
     selector_or_ref: &str,
     iframe_sessions: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let (x, y, effective_session_id) = resolve_element_center(
+    let (x, y, _w, _h, effective_session_id) = resolve_element_center(
         client,
         session_id,
         ref_map,
