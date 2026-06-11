@@ -352,6 +352,39 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
             println!("{}", enabled);
             return;
         }
+        // Stealth self-check (`stealth status` / `doctor`)
+        if let Some(s) = data.get("stealthStatus") {
+            let ok = s.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let mode = s.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
+            println!(
+                "{} stealth: {}  ·  mode: {}",
+                if ok {
+                    color::success_indicator().to_string()
+                } else {
+                    color::cyan("•")
+                },
+                if ok {
+                    "all checks pass"
+                } else {
+                    "some checks need attention"
+                },
+                mode
+            );
+            if let Some(checks) = s.get("checks").and_then(|v| v.as_array()) {
+                for c in checks {
+                    let pass = c.get("pass").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    println!("  {} {}", if pass { "✓" } else { "✗" }, name);
+                }
+            }
+            if let Some(ovs) = s.get("overrides").and_then(|v| v.as_array()) {
+                println!("  applied overrides:");
+                for o in ovs.iter().filter_map(|v| v.as_str()) {
+                    println!("    {}", color::dim(&format!("· {o}")));
+                }
+            }
+            return;
+        }
         if let Some(checked) = data.get("checked").and_then(|v| v.as_bool()) {
             println!("{}", checked);
             return;

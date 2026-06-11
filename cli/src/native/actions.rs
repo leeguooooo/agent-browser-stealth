@@ -1316,6 +1316,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         "content" => handle_content(state).await,
         "evaluate" => handle_evaluate(cmd, state).await,
         "close" => handle_close(state).await,
+        "stealth_status" => handle_stealth_status(state).await,
         "snapshot" => handle_snapshot(cmd, state).await,
         "screenshot" => handle_screenshot(cmd, state).await,
         "click" => handle_click(cmd, state).await,
@@ -2678,6 +2679,89 @@ async fn handle_evaluate(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
     let result = mgr.evaluate(script, None).await?;
     let url = mgr.get_url().await.unwrap_or_default();
     Ok(json!({ "result": result, "origin": url }))
+}
+
+/// Local stealth self-check: reports the active mode, live fingerprint probes,
+/// and the list of applied overrides — so an agent (or human) can confirm
+/// stealth is working without driving an external detector, and audit exactly
+/// what's patched on this path (issue #5).
+async fn handle_stealth_status(state: &DaemonState) -> Result<Value, String> {
+    let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+    let connect = mgr.is_cdp_connection();
+
+    let probe_js = r#"(() => {
+        const ua = navigator.userAgent || '';
+        return {
+            webdriver: navigator.webdriver === true,
+            hasWindowChrome: typeof window.chrome === 'object' && window.chrome !== null,
+            plugins: navigator.plugins ? navigator.plugins.length : 0,
+            languages: navigator.languages || [],
+            platform: navigator.platform || '',
+            headlessUA: /Headless/i.test(ua),
+        };
+    })()"#;
+    let p = mgr.evaluate(probe_js, None).await.unwrap_or(Value::Null);
+    let webdriver = p.get("webdriver").and_then(|v| v.as_bool()).unwrap_or(true);
+    let has_chrome = p
+        .get("hasWindowChrome")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let plugins = p.get("plugins").and_then(|v| v.as_u64()).unwrap_or(0);
+    let headless_ua = p
+        .get("headlessUA")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let checks = json!([
+        { "name": "navigator.webdriver is false", "pass": !webdriver },
+        { "name": "window.chrome present", "pass": has_chrome },
+        { "name": "navigator.plugins non-empty", "pass": plugins > 0, "value": plugins },
+        { "name": "userAgent has no 'Headless'", "pass": !headless_ua },
+    ]);
+    let ok = !webdriver && has_chrome && plugins > 0 && !headless_ua;
+
+    let overrides = if connect {
+        json!([
+            "navigator.webdriver=false via Emulation.setAutomationOverride (native CDP — no JS lie)",
+            "Runtime.enable OFF unless console/error capture is opted in (no rebrowser runtime leak)",
+            "zero JS patches injected — the browser's real fingerprint is used as-is",
+        ])
+    } else {
+        let iframe_proxy =
+            std::env::var("AGENT_BROWSER_DISABLE_IFRAME_PROXY").as_deref() != Ok("1");
+        json!([
+            "navigator.webdriver removed; navigator.languages/locale normalized",
+            "window.chrome / chrome.runtime shimmed; navigator.platform fixed",
+            "WebGL vendor/renderer, plugins, permissions normalized",
+            format!(
+                "srcdoc-iframe contentWindow proxy: {} (CreepJS hasIframeProxy)",
+                if iframe_proxy {
+                    "ON — set AGENT_BROWSER_DISABLE_IFRAME_PROXY=1 for clean 0%"
+                } else {
+                    "off"
+                }
+            ),
+            format!(
+                "canvas/audio noise: {} (AGENT_BROWSER_HIDE_CANVAS)",
+                if std::env::var("AGENT_BROWSER_HIDE_CANVAS").as_deref() == Ok("1") {
+                    "on"
+                } else {
+                    "off (opt-in)"
+                }
+            ),
+            "Chrome flags: --disable-blink-features=AutomationControlled, ANGLE GL",
+        ])
+    };
+
+    Ok(json!({
+        "stealthStatus": {
+            "mode": if connect { "connect (your real Chrome — strongest)" } else { "launch (standalone)" },
+            "ok": ok,
+            "checks": checks,
+            "overrides": overrides,
+            "probe": p,
+        }
+    }))
 }
 
 async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {

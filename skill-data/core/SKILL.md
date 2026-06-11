@@ -520,6 +520,10 @@ agent-browser doctor                     # full diagnosis (env, Chrome, daemons,
 agent-browser doctor --offline --quick   # fast, local-only
 agent-browser doctor --fix               # also run destructive repairs (reinstall Chrome, purge old state, ...)
 agent-browser doctor --json              # structured output for programmatic consumption
+agent-browser stealth status             # stealth self-check: mode + live probes
+agent-browser stealth status --json      #   (webdriver/chrome/plugins/UA) + applied
+                                         #   overrides. Gate a sensitive flow on this
+                                         #   instead of driving an external detector.
 ```
 
 `doctor` auto-cleans stale socket/pid/version sidecar files on every run.

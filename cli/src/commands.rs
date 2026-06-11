@@ -931,6 +931,15 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             Ok(json!({ "id": id, "action": "evaluate", "script": script }))
         }
 
+        // === Stealth self-check ===
+        "stealth" => {
+            // `stealth [status]` — local stealth self-check: mode, live probes
+            // (navigator.webdriver, window.chrome, plugins, UA), and the list of
+            // active overrides. --json for a stable machine-readable shape.
+            // (Distinct from `doctor`, which checks install/env/Chrome health.)
+            Ok(json!({ "id": id, "action": "stealth_status" }))
+        }
+
         // === Close ===
         "close" | "quit" | "exit" => Ok(json!({ "id": id, "action": "close" })),
 
