@@ -315,6 +315,13 @@ pub struct BrowserManager {
     /// browser after it ends. Only ever holds tabs we created — never the user's
     /// existing tabs or other sessions' tabs — so closing them is always safe.
     created_targets: HashSet<String>,
+    /// The session's *intended* active tab, pinned by stable target_id rather
+    /// than the fragile `active_page_index`. Set on every explicit open / tab new
+    /// / tab switch. `active_session_id` resolves through this so a foreign tab
+    /// opening (passive discovery), a tab closing, or list reordering can't drift
+    /// the session's commands onto the wrong page — the wrong-origin-fetch hazard
+    /// in the dogfood reports. Falls back to the index if the pinned tab is gone.
+    active_target_id: Option<String>,
     next_tab_id: u32,
     /// Whether to enable the CDP `Runtime` domain (console / error / exception capture).
     /// OFF by default for stealth: a live `Runtime.enable` is a detectable CDP signal
@@ -440,6 +447,7 @@ impl BrowserManager {
                 ignore_https_errors,
                 visited_origins: HashSet::new(),
                 created_targets: HashSet::new(),
+                active_target_id: None,
                 next_tab_id: 1,
                 capture_console: console_capture_enabled(),
             };
@@ -531,6 +539,7 @@ impl BrowserManager {
             ignore_https_errors: false,
             visited_origins: HashSet::new(),
             created_targets: HashSet::new(),
+            active_target_id: None,
             next_tab_id: 1,
             capture_console: console_capture_enabled(),
         };
@@ -547,6 +556,7 @@ impl BrowserManager {
                 target_type: "page".to_string(),
             });
             manager.active_page_index = 0;
+            manager.pin_active_target();
             manager.enable_domains_direct().await?;
         } else {
             manager.discover_and_attach_targets().await?;
@@ -621,6 +631,7 @@ impl BrowserManager {
                 target_type: "page".to_string(),
             });
             self.active_page_index = 0;
+            self.pin_active_target();
             self.enable_domains(&attach_result.session_id).await?;
         } else {
             for target in &page_targets {
@@ -650,6 +661,7 @@ impl BrowserManager {
             }
 
             self.active_page_index = 0;
+            self.pin_active_target();
             let session_id = self.pages[0].session_id.clone();
             self.enable_domains(&session_id).await?;
         }
@@ -736,9 +748,31 @@ impl BrowserManager {
         Ok(())
     }
 
+    /// Index of the session's active page, resolved through the pinned
+    /// `active_target_id` (stable across reorder/removal/passive discovery) and
+    /// falling back to `active_page_index` when nothing is pinned or the pin is
+    /// gone. This is what keeps commands on the tab the agent actually opened.
+    fn resolved_active_index(&self) -> usize {
+        if let Some(tid) = &self.active_target_id {
+            if let Some(i) = self.pages.iter().position(|p| &p.target_id == tid) {
+                return i;
+            }
+        }
+        self.active_page_index
+    }
+
+    /// Pin the current active page by target_id so later commands stick to it.
+    /// Call after any explicit open / tab new / tab switch.
+    fn pin_active_target(&mut self) {
+        self.active_target_id = self
+            .pages
+            .get(self.active_page_index)
+            .map(|p| p.target_id.clone());
+    }
+
     pub fn active_session_id(&self) -> Result<&str, String> {
         self.pages
-            .get(self.active_page_index)
+            .get(self.resolved_active_index())
             .map(|p| p.session_id.as_str())
             .ok_or_else(|| "No active page".to_string())
     }
@@ -991,7 +1025,7 @@ impl BrowserManager {
 
     pub fn active_target_id(&self) -> Result<&str, String> {
         self.pages
-            .get(self.active_page_index)
+            .get(self.resolved_active_index())
             .map(|p| p.target_id.as_str())
             .ok_or_else(|| "No active page".to_string())
     }
@@ -1219,6 +1253,7 @@ impl BrowserManager {
             target_type: "page".to_string(),
         });
         self.active_page_index = index;
+        self.pin_active_target();
 
         Ok(json!({
             "tabId": format_tab_id(tab_id),
@@ -1238,6 +1273,7 @@ impl BrowserManager {
         }
 
         self.active_page_index = index;
+        self.pin_active_target();
         let session_id = self.pages[index].session_id.clone();
         self.enable_domains(&session_id).await?;
 
@@ -1581,6 +1617,7 @@ impl BrowserManager {
         let index = self.pages.len();
         self.pages.push(page);
         self.active_page_index = index;
+        self.pin_active_target();
     }
 
     /// Add a passively-discovered page WITHOUT changing the active tab.
@@ -1783,6 +1820,7 @@ async fn initialize_lightpanda_manager(
             ignore_https_errors: false,
             visited_origins: HashSet::new(),
             created_targets: HashSet::new(),
+            active_target_id: None,
             next_tab_id: 1,
             capture_console: console_capture_enabled(),
         };
