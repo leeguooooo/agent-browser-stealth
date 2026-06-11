@@ -23,6 +23,7 @@ use super::cdp::types::{
 use super::cookies;
 use super::diff;
 use super::element::RefMap;
+use super::humanize;
 use super::inspect_server::InspectServer;
 use super::interaction;
 use super::network::{self, DomainFilter, EventTracker};
@@ -2512,7 +2513,49 @@ async fn handle_navigate(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
-    mgr.navigate(url, wait_until).await
+    let result = mgr.navigate(url, wait_until).await?;
+    // Adaptive humanize: sample the freshly loaded page for known behavioural
+    // anti-bot vendors and escalate this session to Human if any are present.
+    detect_and_set_humanize(mgr).await;
+    Ok(result)
+}
+
+/// After navigation, probe the page for known anti-bot vendor fingerprints
+/// (cookies / script URLs / `window` globals) and set this session's humanize
+/// level accordingly — `Human` when a vendor is detected, else the `Off`
+/// baseline. Best-effort: any failure leaves the level unchanged. Skipped when
+/// `AGENT_BROWSER_HUMANIZE` is set, since the override always wins and the probe
+/// would be wasted work.
+async fn detect_and_set_humanize(mgr: &BrowserManager) {
+    if std::env::var("AGENT_BROWSER_HUMANIZE").is_ok() {
+        return;
+    }
+    let js = r#"(() => { try {
+        const cookies = document.cookie.split(';').map(c => c.trim().split('=')[0]).filter(Boolean);
+        const scripts = Array.from(document.scripts, s => s.src || '').filter(Boolean);
+        const re = /_px|bmak|_abck|datadome|reese84|kpsdk|incap_ses|visid_incap|akam/i;
+        const globals = Object.getOwnPropertyNames(window).filter(k => re.test(k));
+        return { cookies, scripts, globals };
+    } catch (e) { return {}; } })()"#;
+    let Ok(val) = mgr.evaluate(js, None).await else {
+        return;
+    };
+    let to_strings = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let signals = humanize::DetectSignals {
+        cookie_names: to_strings(val.get("cookies")),
+        script_urls: to_strings(val.get("scripts")),
+        window_globals: to_strings(val.get("globals")),
+    };
+    let level = humanize::detect_level(&signals, humanize::HumanizeLevel::Off);
+    humanize::set_detected_level(level);
 }
 
 async fn handle_url(state: &DaemonState) -> Result<Value, String> {
