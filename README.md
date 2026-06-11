@@ -1,10 +1,28 @@
 # agent-browser-stealth
 
+**English** · [简体中文](README.zh.md)
+
 ![agent-browser-stealth](assets/hero.png)
 
 Stealth fork of [agent-browser](https://github.com/vercel-labs/agent-browser) — connects to your real Chrome, shares your login sessions, and is undetectable by anti-bot systems.
 
 For basic usage, commands, and API reference, see the [upstream documentation](https://github.com/vercel-labs/agent-browser).
+
+## Why not just use Claude's Chrome extension, web-access, or Playwright?
+
+Each alternative solves *part* of the problem. agent-browser-stealth is the only one that does all of it — **drive your own logged-in Chrome, from any tool, with no consent popup, undetectably, and with many agents at once.**
+
+| | [Claude in Chrome](https://www.anthropic.com/claude/chrome) | web-access / raw CDP port | Playwright · Puppeteer · browser-use | **agent-browser-stealth** |
+|---|:---:|:---:|:---:|:---:|
+| Works with **any** agent / CLI (not one app) | ❌ Claude only | ✅ | ✅ | ✅ |
+| Drives your **real, logged-in** Chrome | ✅ | ✅ | ❌ fresh empty profile | ✅ |
+| **No "Allow remote debugging?" popup** | ✅ | ❌ every connect | — (own browser) | ✅ native messaging |
+| **Undetectable** (CreepJS) | ~real | ~real | ❌ automation markers / headless | ✅ **0% stealth, verified** |
+| `Runtime.enable` CDP leak (rebrowser) | — | leaks | leaks | ✅ **off by default** |
+| **Concurrent agents**, isolated tab groups | ❌ | ❌ | ❌ | ✅ |
+| Permissions footprint | 16 incl. `<all_urls>` | full CDP | full control | **7, no `<all_urls>`** |
+
+> Short version: **Claude in Chrome** is great but locked to Claude; **web-access / raw `--remote-debugging-port`** pops Chrome 136+'s consent dialog on every attach; **Playwright/Puppeteer/browser-use** launch a *fresh* browser (no login, automation-flagged, often headless → detected). agent-browser-stealth drives the Chrome you're already signed into, over a native-messaging extension, and reads as a 100% real human browser. Evidence in [Anti-detection](#anti-detection).
 
 ## Why this fork?
 
