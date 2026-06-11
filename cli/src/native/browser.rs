@@ -2139,7 +2139,11 @@ mod tests {
         (pages, new_active, new_pin)
     }
 
-    fn resolve_active<'a>(pages: &'a [String], active_index: usize, pin: &Option<String>) -> &'a str {
+    fn resolve_active<'a>(
+        pages: &'a [String],
+        active_index: usize,
+        pin: &Option<String>,
+    ) -> &'a str {
         if let Some(tid) = pin {
             if let Some(p) = pages.iter().find(|p| *p == tid) {
                 return p;
@@ -2161,7 +2165,10 @@ mod tests {
         let (pages, active, pin) = simulate_remove(&["blank", "creepjs"], 1, "creepjs", "creepjs");
         // pin must point at a page that still exists (no dangling fallback).
         let resolved = resolve_active(&pages, active, &pin);
-        assert!(pages.iter().any(|p| p == resolved), "resolved a dangling target");
+        assert!(
+            pages.iter().any(|p| p == resolved),
+            "resolved a dangling target"
+        );
         assert_eq!(resolved, "blank");
     }
 
