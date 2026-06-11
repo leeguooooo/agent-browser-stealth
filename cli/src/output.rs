@@ -358,6 +358,16 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         }
         // Eval result
         if let Some(result) = data.get("result") {
+            // Surface which page the eval actually ran on — to stderr, so it
+            // never corrupts the parsed value on stdout. Lets an agent catch tab
+            // drift (commands landing on the wrong tab) before trusting a result,
+            // e.g. a logged-in `fetch` that hit the wrong origin. (In
+            // content-boundaries mode the origin is already in the banner.)
+            if !opts.content_boundaries {
+                if let Some(o) = origin.filter(|o| !o.is_empty()) {
+                    eprintln!("eval @ {o}");
+                }
+            }
             let formatted = serde_json::to_string_pretty(result).unwrap_or_default();
             print_with_boundaries(&formatted, origin, opts);
             return;

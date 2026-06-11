@@ -3031,6 +3031,22 @@ async fn handle_fill(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
 async fn handle_type(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
+
+    // `type --focused <text>`: type into the currently-focused element without a
+    // selector (custom widgets that move focus to a hidden input on open).
+    if cmd
+        .get("focused")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let text = cmd
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing 'text' parameter")?;
+        interaction::type_text_into_active_context(&mgr.client, &session_id, text, None).await?;
+        return Ok(json!({ "typed": text, "focused": true }));
+    }
+
     let selector = cmd
         .get("selector")
         .and_then(|v| v.as_str())

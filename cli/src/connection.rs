@@ -832,7 +832,19 @@ pub fn send_command(mut cmd: Value, session: &str) -> Result<Response, String> {
             obj.insert("_clickMode".to_string(), Value::String(m));
         }
         if let Ok(h) = std::env::var("AGENT_BROWSER_HUMANIZE") {
-            obj.insert("_humanize".to_string(), Value::String(h));
+            // Only forward a recognized level; warn once (like the --humanize flag
+            // does) when the env var is set to garbage, instead of silently
+            // ignoring it.
+            if crate::native::humanize::HumanizeLevel::parse(&h).is_some() {
+                obj.insert("_humanize".to_string(), Value::String(h));
+            } else {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    eprintln!(
+                        "warning: AGENT_BROWSER_HUMANIZE must be off|fast|human, got {h:?} (ignored)"
+                    );
+                });
+            }
         }
     }
 

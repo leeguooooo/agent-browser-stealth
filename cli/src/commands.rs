@@ -403,9 +403,18 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             Ok(json!({ "id": id, "action": "fill", "selector": sel, "value": rest[1..].join(" ") }))
         }
         "type" => {
+            // `type --focused <text>` types into whatever element currently has
+            // focus (no selector) — for custom widgets that move focus to a hidden
+            // input after you open them.
+            if rest.first() == Some(&"--focused") {
+                return Ok(json!({
+                    "id": id, "action": "type", "focused": true,
+                    "text": rest[1..].join(" "),
+                }));
+            }
             let sel = rest.first().ok_or_else(|| ParseError::MissingArguments {
                 context: "type".to_string(),
-                usage: "type <selector> <text>",
+                usage: "type <selector> <text>   (or: type --focused <text>)",
             })?;
             Ok(json!({ "id": id, "action": "type", "selector": sel, "text": rest[1..].join(" ") }))
         }
