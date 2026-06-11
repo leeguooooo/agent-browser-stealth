@@ -761,7 +761,12 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                         color::green(path)
                     );
                     if let Some(annotations) = data.get("annotations").and_then(|v| v.as_array()) {
-                        for ann in annotations {
+                        // Cap the printed legend on dense pages (it can be
+                        // hundreds of lines and flood the terminal). The image
+                        // still shows every marker; --json returns the full list.
+                        const LEGEND_CAP: usize = 40;
+                        let total = annotations.len();
+                        for ann in annotations.iter().take(LEGEND_CAP) {
                             let num = ann.get("number").and_then(|n| n.as_u64()).unwrap_or(0);
                             let ref_id = ann.get("ref").and_then(|r| r.as_str()).unwrap_or("");
                             let role = ann.get("role").and_then(|r| r.as_str()).unwrap_or("");
@@ -782,6 +787,15 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                                     name,
                                 );
                             }
+                        }
+                        if total > LEGEND_CAP {
+                            println!(
+                                "   {}",
+                                color::dim(&format!(
+                                    "… and {} more markers (shown in the image; --json for the full list)",
+                                    total - LEGEND_CAP
+                                ))
+                            );
                         }
                     }
                 }
