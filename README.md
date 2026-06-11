@@ -17,12 +17,14 @@ Each alternative solves *part* of the problem. agent-browser-stealth is the only
 | Works with **any** agent / CLI (not one app) | ❌ Claude only | ✅ | ✅ | ✅ |
 | Drives your **real, logged-in** Chrome | ✅ | ✅ | ❌ fresh empty profile | ✅ |
 | **No "Allow remote debugging?" popup** | ✅ | ❌ every connect | — (own browser) | ✅ native messaging |
-| **Undetectable** (CreepJS) | ~real | ~real | ❌ automation markers / headless | ✅ **0% stealth, verified** |
-| `Runtime.enable` CDP leak (rebrowser) | — | leaks | leaks | ✅ **off by default** |
-| **Concurrent agents**, isolated tab groups | ❌ | ❌ | ❌ | ✅ |
+| Real-browser fingerprint (CreepJS ~0%)¹ | ✅ | ✅ | ❌ automation markers / headless | ✅ **verified 0%** |
+| **No `Runtime.enable` CDP leak** (rebrowser)² | — | ❌ leaks | ❌ leaks | ✅ **off by default** |
+| Many agents on **one** real Chrome, isolated tab groups³ | ❌ single app | ⚠️ shared tabs, no isolation | ❌ separate browsers | ✅ |
 | Permissions footprint | 16 incl. `<all_urls>` | full CDP | full control | **7, no `<all_urls>`** |
 
-> Short version: **Claude in Chrome** is great but locked to Claude; **web-access / raw `--remote-debugging-port`** pops Chrome 136+'s consent dialog on every attach; **Playwright/Puppeteer/browser-use** launch a *fresh* browser (no login, automation-flagged, often headless → detected). agent-browser-stealth drives the Chrome you're already signed into, over a native-messaging extension, and reads as a 100% real human browser. Evidence in [Anti-detection](#anti-detection).
+> Short version: **Claude in Chrome** is great but locked to Claude; **web-access / raw `--remote-debugging-port`** pops Chrome 136+'s consent dialog on every attach; **Playwright/Puppeteer/browser-use** launch a *fresh* browser (no login, automation-flagged, often headless → detected). agent-browser-stealth drives the Chrome you're already signed into, over a native-messaging extension, and reads as a 100% real human browser.
+>
+> <sub>¹ All three real-Chrome tools score ~0% on CreepJS (it's a real browser); we've measured ours. ² rebrowser's `runtimeEnableLeak` — verified clean on our relay path; Claude in Chrome not independently tested (—). ³ web-access can run parallel sub-agents on one browser, but without per-session isolation; each `--session` here gets its own colored, command-isolated tab group. See [Anti-detection](#anti-detection) for the measured numbers.</sub>
 
 ## Why this fork?
 

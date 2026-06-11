@@ -17,12 +17,14 @@
 | **任意** agent / CLI 都能用（不绑单一 app） | ❌ 仅 Claude | ✅ | ✅ | ✅ |
 | 驱动你**真实、已登录**的 Chrome | ✅ | ✅ | ❌ 全新空 profile | ✅ |
 | **不弹 "Allow remote debugging?"** | ✅ | ❌ 每次连都弹 | —（自带浏览器） | ✅ 原生消息 |
-| **不可检测**（CreepJS） | ~真实 | ~真实 | ❌ 自动化特征 / headless | ✅ **0% stealth，实测** |
-| `Runtime.enable` CDP 泄漏（rebrowser） | — | 泄漏 | 泄漏 | ✅ **默认关闭** |
-| **多 agent 并发**、标签组隔离 | ❌ | ❌ | ❌ | ✅ |
+| 真实浏览器指纹（CreepJS ~0%）¹ | ✅ | ✅ | ❌ 自动化特征 / headless | ✅ **已实测 0%** |
+| **无 `Runtime.enable` CDP 泄漏**（rebrowser）² | — | ❌ 泄漏 | ❌ 泄漏 | ✅ **默认关闭** |
+| 多 agent 共用**同一个**真实 Chrome、标签组隔离³ | ❌ 单 app | ⚠️ 共享 tab、无隔离 | ❌ 各开各的浏览器 | ✅ |
 | 权限面 | 16 个，含 `<all_urls>` | 完整 CDP | 完全控制 | **7 个，无 `<all_urls>`** |
 
-> 一句话：**Claude in Chrome** 很好，但只能给 Claude 用；**web-access / 裸 `--remote-debugging-port`** 每次连接都会弹 Chrome 136+ 的同意框；**Playwright/Puppeteer/browser-use** 启的是**全新**浏览器（没登录、带自动化标记、常 headless → 被识破）。agent-browser-stealth 直接开你**已经登录好**的那个 Chrome，走原生消息扩展，在检测站上读起来就是个 100% 真人浏览器。证据见 [反检测](#反检测)。
+> 一句话：**Claude in Chrome** 很好，但只能给 Claude 用；**web-access / 裸 `--remote-debugging-port`** 每次连接都会弹 Chrome 136+ 的同意框；**Playwright/Puppeteer/browser-use** 启的是**全新**浏览器（没登录、带自动化标记、常 headless → 被识破）。agent-browser-stealth 直接开你**已经登录好**的那个 Chrome，走原生消息扩展，在检测站上读起来就是个 100% 真人浏览器。
+>
+> <sub>¹ 三家"真实 Chrome"工具在 CreepJS 上都 ~0%（毕竟是真浏览器），我们的是实测过的。² rebrowser `runtimeEnableLeak` —— 我们的中继路径实测无泄漏；Claude in Chrome 未独立测试（—）。³ web-access 也能跑并行子 agent，但无每会话隔离；本工具每个 `--session` 拿到自己彩色、命令隔离的标签组。实测数字见 [反检测](#反检测)。</sub>
 
 ## 为什么要 fork
 
