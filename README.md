@@ -100,12 +100,26 @@ fresh one.
 
 ## Setup: connect to your Chrome
 
-Attaching uses the Chrome DevTools Protocol, which Chrome only exposes when it is
-**launched with a remote-debugging port**. This is a startup flag, not a setting
-— the `chrome://inspect` toggle alone is **not** enough (it only enables target
-discovery, not the CDP attach).
+**Recommended — the browser extension (one click, no popups).** Install the
+[**agent-browser-stealth** extension from the Chrome Web Store](https://chromewebstore.google.com/detail/agent-browser-stealth/knfcmbamhjmaonkfnjhldjedeobeafmk),
+then register the local bridge once:
 
-**Recommended — fully quit Chrome, then relaunch with the port:**
+```bash
+agent-browser extension install      # register the native-messaging host (one-time)
+agent-browser open https://x.com/home
+```
+
+`agent-browser open` then drives your real, logged-in Chrome over **native
+messaging** — no debug port, no token, and **no "Allow remote debugging?" dialog,
+ever**. The extension auto-updates and survives Chrome restarts, so it stays
+connected with zero per-use confirmation (ideal for unattended/agent use).
+
+<details>
+<summary>Alternative — raw remote-debugging port (pops a consent dialog)</summary>
+
+Without the extension, agent-browser attaches over the Chrome DevTools Protocol,
+which Chrome only exposes when **launched with a remote-debugging port** (a
+startup flag — the `chrome://inspect` toggle alone is not enough):
 
 ```bash
 # macOS
@@ -115,9 +129,10 @@ google-chrome --remote-debugging-port=9222
 # Windows: add --remote-debugging-port=9222 to your Chrome shortcut's target
 ```
 
-Then run `agent-browser open <url>` — it auto-discovers the port and attaches.
-On first attach, **Chrome 136+ shows an "Allow remote debugging?" dialog — click
-Allow once** (it persists for that Chrome session).
+Then `agent-browser open <url>` auto-discovers the port. On first attach,
+**Chrome 136+ shows an "Allow remote debugging?" dialog** — click Allow once (it
+persists for that Chrome session). The extension above avoids this entirely.
+</details>
 
 **No setup / don't want to touch your real Chrome?** Use
 `agent-browser --launch open <url>` to spawn a fresh isolated stealth browser
