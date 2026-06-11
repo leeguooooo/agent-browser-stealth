@@ -199,10 +199,31 @@ async function handleForwardCdpCommand(msg) {
   }
 
   // Everything else → chrome.debugger on the resolved tab.
-  const tabId =
-    (sessionId ? tabForSession(sessionId) : null) ??
-    (typeof params?.targetId === 'string' ? tabForTarget(params.targetId) : null) ??
-    anyConnectedTab()
+  //
+  // A daemon-supplied sessionId/targetId MUST resolve to a real attached tab.
+  // The old code fell through to anyConnectedTab() when it didn't, which
+  // silently ran the command (eval/screenshot/network) on an arbitrary tab —
+  // exactly the "ran on the wrong page with no warning" failure in issue #8.1,
+  // and the blank-screenshot symptom after a service-worker restart (#8.2).
+  // Fail loudly instead so the agent sees an actionable error, not bad data.
+  let tabId
+  if (sessionId) {
+    tabId = tabForSession(sessionId)
+    if (!tabId) {
+      throw new Error(
+        `stale sessionId ${sessionId} for ${method}: its tab is gone (closed, ` +
+          `navigated across processes, or lost after an extension restart). ` +
+          `Re-attach by re-opening your target URL before retrying.`,
+      )
+    }
+  } else if (typeof params?.targetId === 'string') {
+    tabId = tabForTarget(params.targetId)
+    if (!tabId) throw new Error(`no attached tab for targetId ${params.targetId} (${method})`)
+  } else {
+    // No session/target specified — a browser-level command that legitimately
+    // applies to any attached tab.
+    tabId = anyConnectedTab()
+  }
   if (!tabId) throw new Error(`no attached tab for ${method}`)
   const dbg = { tabId }
 
