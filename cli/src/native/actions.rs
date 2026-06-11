@@ -2981,6 +2981,13 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
         response["annotations"] = serde_json::to_value(&result.annotations)
             .map_err(|e| format!("Failed to serialize annotations: {}", e))?;
     }
+    // Stamp which page was captured so a screenshot of the wrong tab is obvious
+    // (issue #8.1: relay sessions can drift to whatever tab the user activated).
+    if let Ok(url) = mgr.get_url().await {
+        if !url.is_empty() {
+            response["origin"] = json!(url);
+        }
+    }
 
     Ok(response)
 }
@@ -7914,23 +7921,40 @@ pub fn matches_status_filter(status: Option<i64>, filter: &str) -> bool {
     false
 }
 
+async fn enable_request_tracking(state: &mut DaemonState) {
+    if state.request_tracking {
+        return;
+    }
+    state.request_tracking = true;
+    if let Some(ref mgr) = state.browser {
+        if let Ok(session_id) = mgr.active_session_id() {
+            let _ = mgr
+                .client
+                .send_command_no_params("Network.enable", Some(session_id))
+                .await;
+        }
+    }
+}
+
 async fn handle_requests(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     if cmd.get("clear").and_then(|v| v.as_bool()).unwrap_or(false) {
         state.tracked_requests.clear();
+        // Enable Network capture NOW, on `--clear`, not lazily on the next read.
+        // `--clear` is the canonical "start capturing fresh" call, so requests
+        // fired between it and the following `requests` read must be tracked.
+        // Lazy-enabling only on read missed exactly those → intermittent
+        // "No requests captured" on the first try, fine on retry (issue #8.3).
+        enable_request_tracking(state).await;
         return Ok(json!({ "cleared": true }));
     }
 
-    if !state.request_tracking {
-        state.request_tracking = true;
-        if let Some(ref mgr) = state.browser {
-            if let Ok(session_id) = mgr.active_session_id() {
-                let _ = mgr
-                    .client
-                    .send_command_no_params("Network.enable", Some(session_id))
-                    .await;
-            }
-        }
-    }
+    enable_request_tracking(state).await;
+    // Current page URL, so a `requests` read on a drifted/wrong tab is obvious
+    // and "0 captured" can't be confused with "wrong page" (issues #8.1/#8.3).
+    let origin = match state.browser.as_ref() {
+        Some(mgr) => mgr.get_url().await.ok().filter(|u| !u.is_empty()),
+        None => None,
+    };
 
     let filter = cmd.get("filter").and_then(|v| v.as_str());
     let type_filter = cmd.get("type").and_then(|v| v.as_str());
@@ -7967,7 +7991,14 @@ async fn handle_requests(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         })
         .collect();
 
-    Ok(json!({ "requests": requests }))
+    // NB: do NOT add a top-level `count` field here — the human formatter treats
+    // any `{count}` as a `get count` result and prints just the number, which
+    // would swallow the request list. The list length is self-evident.
+    let mut response = json!({ "requests": requests });
+    if let Some(o) = origin {
+        response["origin"] = json!(o);
+    }
+    Ok(response)
 }
 
 async fn handle_request_detail(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {

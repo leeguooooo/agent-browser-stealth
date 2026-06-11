@@ -595,6 +595,15 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         }
         // Network requests
         if let Some(requests) = data.get("requests").and_then(|v| v.as_array()) {
+            // Stamp the page these requests were read from, mirroring `eval @ url`,
+            // so a read against a drifted/wrong tab is obvious (issue #8.1).
+            if let Some(o) = data
+                .get("origin")
+                .and_then(|v| v.as_str())
+                .filter(|o| !o.is_empty())
+            {
+                eprintln!("network @ {o}");
+            }
             if requests.is_empty() {
                 println!("No requests captured");
             } else {
@@ -798,6 +807,15 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                         color::success_indicator(),
                         color::green(path)
                     );
+                    // Stamp which page was captured (mirrors `eval @ url`) so a
+                    // screenshot of the wrong/drifted tab is obvious (issue #8.1).
+                    if let Some(o) = data
+                        .get("origin")
+                        .and_then(|v| v.as_str())
+                        .filter(|o| !o.is_empty())
+                    {
+                        eprintln!("screenshot @ {o}");
+                    }
                     if let Some(annotations) = data.get("annotations").and_then(|v| v.as_array()) {
                         // Cap the printed legend on dense pages (it can be
                         // hundreds of lines and flood the terminal). The image

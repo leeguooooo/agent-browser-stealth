@@ -625,7 +625,10 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
             // version (e.g. after an upgrade), kill it and start a fresh one.
             if !daemon_version_matches(session) {
                 eprintln!(
-                    "{} Daemon version mismatch detected, restarting...",
+                    "{} Daemon version mismatch detected, restarting... \
+                     In-memory context (active tab, refs, captured requests) is reset. \
+                     If the next read looks blank or lands on the wrong page, re-open \
+                     your target URL before retrying (issue #8.2).",
                     crate::color::warning_indicator()
                 );
                 // Best-effort: ask the old daemon for its current URL so the
