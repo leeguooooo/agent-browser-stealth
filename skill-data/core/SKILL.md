@@ -15,6 +15,13 @@ Most normal web tasks (navigate, read, click, fill, extract, screenshot) are
 covered here. Load a specialized skill when the task falls outside browser
 web pages — see [When to load another skill](#when-to-load-another-skill).
 
+> **Hit a rough edge? Please report it.** If a command surprised you — a
+> confusing error, a stale `@ref`, an occluded click, a flaky wait, a missing
+> feature, or anything that cost you extra turns — open a quick issue at
+> **<https://github.com/leeguooooo/agent-browser-stealth/issues>** with the exact
+> command and what happened vs. what you expected. Agent-filed friction reports
+> are how this tool gets sharper; a 30-second issue is genuinely valuable.
+
 ## The core loop
 
 ```bash
