@@ -219,8 +219,16 @@ agent-browser press Enter                 # press a key at current focus
 agent-browser press Control+a             # key combination
 agent-browser check @e3                   # check checkbox
 agent-browser uncheck @e3                 # uncheck
-agent-browser select @e4 "option-value"   # select dropdown option
+agent-browser select @e4 "option-value"   # native <select> only
 agent-browser select @e4 "a" "b"          # select multiple
+agent-browser pick @e4 --option "Europe"  # ANY combobox (react-select / ARIA /
+                                          # native): opens it, waits for the menu
+                                          # (incl. portal-rendered), matches by
+                                          # visible text, fires the right events,
+                                          # and ERRORS if the option never shows
+                                          # (no silent no-op). Use this for custom
+                                          # dropdowns where `select` returns ✓ but
+                                          # changes nothing.
 agent-browser upload @e5 file1.pdf        # upload file(s)
 agent-browser scroll down 500             # scroll page (up/down/left/right)
 agent-browser scrollintoview @e1          # scroll element into view

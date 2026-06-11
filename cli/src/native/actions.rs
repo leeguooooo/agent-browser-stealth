@@ -1323,6 +1323,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         "fill" => handle_fill(cmd, state).await,
         "type" => handle_type(cmd, state).await,
         "press" => handle_press(cmd, state).await,
+        "pick" => handle_pick(cmd, state).await,
         "hover" => handle_hover(cmd, state).await,
         "scroll" => handle_scroll(cmd, state).await,
         "select" => handle_select(cmd, state).await,
@@ -3070,6 +3071,103 @@ async fn handle_type(cmd: &Value, state: &mut DaemonState) -> Result<Value, Stri
     )
     .await?;
     Ok(json!({ "typed": text }))
+}
+
+/// Atomic combobox select: `pick <selector> --option "<text>"`. Opens the control
+/// (so a portal-rendered menu mounts), polls for the option by visible text, then
+/// fires the full pointer/mouse event sequence on it — covering native `<select>`,
+/// ARIA combobox/listbox, and react-select, which a bare `click`+`press Enter`
+/// can't do reliably. Runs as one in-page async routine so the open→render→pick
+/// dance happens without round-trips that let the menu collapse between commands.
+async fn handle_pick(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
+    let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+    let session_id = mgr.active_session_id()?.to_string();
+    let selector = cmd
+        .get("selector")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'selector' parameter")?;
+    let option = cmd
+        .get("option")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'option' parameter")?;
+
+    let (object_id, effective_session_id) = super::element::resolve_element_object_id(
+        &mgr.client,
+        &session_id,
+        &state.ref_map,
+        selector,
+        &state.iframe_sessions,
+    )
+    .await?;
+
+    let func = format!(
+        r#"async function() {{
+            const want = {opt};
+            const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+            const matches = el => norm(el.textContent).toLowerCase().includes(want.toLowerCase());
+            const el = this;
+            const fire = (n, t) => n.dispatchEvent(new MouseEvent(t, {{ bubbles: true, cancelable: true, view: window }}));
+
+            // Native <select>: set the matching option and dispatch input/change.
+            if (el.tagName === 'SELECT') {{
+                const opt = [...el.options].find(matches);
+                if (!opt) return {{ ok: false, error: 'no <option> matched ' + JSON.stringify(want) }};
+                el.value = opt.value;
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                return {{ ok: true, picked: norm(opt.textContent), value: el.value, kind: 'select' }};
+            }}
+
+            // Custom widget: open it.
+            (el.focus && el.focus());
+            ['pointerdown', 'mousedown', 'mouseup', 'click'].forEach(t => fire(el, t));
+
+            // Poll for the option to render anywhere in the document (portals
+            // mount the menu outside the trigger), then click it.
+            const sel = '[role=option], [role=listbox] [role=option], li[role=option], [class*=option], [class*=item]';
+            const find = () => [...document.querySelectorAll(sel)].find(o => o.offsetParent !== null && matches(o));
+            const deadline = Date.now() + 2500;
+            let opt = find();
+            while (!opt && Date.now() < deadline) {{
+                await new Promise(r => setTimeout(r, 80));
+                opt = find();
+            }}
+            if (!opt) return {{ ok: false, error: 'option ' + JSON.stringify(want) + ' did not appear after opening the control' }};
+            (opt.scrollIntoView && opt.scrollIntoView({{ block: 'center' }}));
+            ['pointermove', 'pointerover', 'mouseover', 'pointerdown', 'mousedown', 'mouseup', 'click'].forEach(t => fire(opt, t));
+            return {{ ok: true, picked: norm(opt.textContent), kind: 'custom' }};
+        }}"#,
+        opt = serde_json::to_string(option).unwrap_or_default(),
+    );
+
+    let result: super::cdp::types::EvaluateResult = mgr
+        .client
+        .send_command_typed(
+            "Runtime.callFunctionOn",
+            &super::cdp::types::CallFunctionOnParams {
+                function_declaration: func,
+                object_id: Some(object_id),
+                arguments: None,
+                return_by_value: Some(true),
+                await_promise: Some(true),
+            },
+            Some(&effective_session_id),
+        )
+        .await?;
+
+    if let Some(ref ex) = result.exception_details {
+        return Err(format!("pick failed: {}", ex.text));
+    }
+    let val = result.result.value.unwrap_or(Value::Null);
+    if val.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        Ok(json!({ "picked": val.get("picked"), "selector": selector }))
+    } else {
+        Err(val
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pick failed")
+            .to_string())
+    }
 }
 
 async fn handle_press(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {

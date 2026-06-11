@@ -418,6 +418,33 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             })?;
             Ok(json!({ "id": id, "action": "type", "selector": sel, "text": rest[1..].join(" ") }))
         }
+        "pick" => {
+            // pick <selector|@ref> --option "<text>"  — atomic combobox select:
+            // open the control, wait for options (incl. portal menus), match by
+            // text, fire the right event sequence, verify. Covers native <select>,
+            // ARIA combobox/listbox, and react-select.
+            let sel = rest.first().ok_or_else(|| ParseError::MissingArguments {
+                context: "pick".to_string(),
+                usage: "pick <selector> --option \"<text>\"",
+            })?;
+            let opt_pos = rest.iter().position(|a| *a == "--option" || *a == "-o");
+            let option = match opt_pos {
+                Some(p) => rest[p + 1..].join(" "),
+                None => {
+                    return Err(ParseError::MissingArguments {
+                        context: "pick".to_string(),
+                        usage: "pick <selector> --option \"<text>\"",
+                    })
+                }
+            };
+            if option.is_empty() {
+                return Err(ParseError::MissingArguments {
+                    context: "pick".to_string(),
+                    usage: "pick <selector> --option \"<text>\"",
+                });
+            }
+            Ok(json!({ "id": id, "action": "pick", "selector": sel, "option": option }))
+        }
         "hover" => {
             let sel = rest.first().ok_or_else(|| ParseError::MissingArguments {
                 context: "hover".to_string(),
