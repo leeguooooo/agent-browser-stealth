@@ -783,14 +783,40 @@ pub async fn auto_connect_cdp() -> Result<String, String> {
     // / :9222 probes below: if the user's Chrome happens to also be listening on a
     // debug port, attaching there would pop the consent dialog and defeat the
     // whole zero-interaction extension path.
-    if let Some(relay) = crate::connect::relay_url() {
-        // The relay is a local CDP-over-WS endpoint we connect to like Chrome.
-        // A bare TCP liveness check (no WS upgrade) confirms it is actually
-        // accepting before we commit, mirroring the consent-free probe used for
-        // DevToolsActivePort.
-        if relay_is_live(&relay).await {
-            return Ok(relay);
+    // If the extension is installed, it is the *intended* transport. The relay
+    // URL file comes and goes with the MV3 service worker (a Chrome restart or an
+    // idle SW briefly drops it), so a single failed probe doesn't mean "no
+    // extension" — retry for a few seconds while it reconnects. Crucially, when
+    // the extension is set up we must NEVER fall through to the raw :9222 path
+    // below: that pops Chrome 136+'s "Allow remote debugging?" dialog, the exact
+    // thing the extension exists to avoid.
+    let host_installed = crate::connect::host_installed();
+    let relay_attempts = if host_installed { 10 } else { 1 };
+    for attempt in 0..relay_attempts {
+        if let Some(relay) = crate::connect::relay_url() {
+            // The relay is a local CDP-over-WS endpoint we connect to like Chrome.
+            // A bare TCP liveness check (no WS upgrade) confirms it is actually
+            // accepting before we commit, mirroring the consent-free probe used
+            // for DevToolsActivePort.
+            if relay_is_live(&relay).await {
+                return Ok(relay);
+            }
         }
+        if host_installed && attempt + 1 < relay_attempts {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+
+    if host_installed {
+        return Err(
+            "The agent-browser-stealth extension is installed, but its relay \
+             isn't connected right now. Wake it up — click the extension's \
+             toolbar icon, or reload it at chrome://extensions — then retry. \
+             (agent-browser will not attach to a raw --remote-debugging-port \
+             while the extension is set up, because that pops Chrome's \"Allow \
+             remote debugging?\" dialog. Use --cdp <port> to force the raw path.)"
+                .to_string(),
+        );
     }
 
     let user_data_dirs = get_chrome_user_data_dirs();

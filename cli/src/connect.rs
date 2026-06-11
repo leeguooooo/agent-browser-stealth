@@ -344,6 +344,19 @@ fn host_manifest_path_for_chrome() -> Option<PathBuf> {
         })
 }
 
+/// True if the ab-connect native-messaging host manifest is present — i.e. the
+/// user has set up the extension path. When installed, auto-connect treats the
+/// dialog-free extension relay as the *intended* transport and refuses to fall
+/// back to a raw debug port (which would pop Chrome 136+'s "Allow remote
+/// debugging?" consent modal). The relay-url file comes and goes with the
+/// service worker; this manifest is the durable signal that the extension is
+/// the chosen path.
+pub fn host_installed() -> bool {
+    native_messaging_dirs()
+        .into_iter()
+        .any(|d| d.join(format!("{HOST_NAME}.json")).exists())
+}
+
 fn report(json: bool, ok: bool, msg: &str) {
     if json {
         println!(
