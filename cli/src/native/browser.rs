@@ -1593,7 +1593,25 @@ impl BrowserManager {
                 })),
                 Some(&effective_session_id),
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                // Chrome's chrome.debugger API (the extension-relay transport)
+                // forbids DOM.setFileInputFiles for security, surfacing as an
+                // opaque `-32000 "Not allowed"`. Translate it into an actionable
+                // message rather than leaking the raw CDP error (issue #13).
+                if e.contains("Not allowed") || e.contains("-32000") {
+                    "file upload isn't supported over the extension relay — \
+                     Chrome's chrome.debugger API forbids DOM.setFileInputFiles. \
+                     Use a direct-CDP session instead: \
+                     `chrome-use --session up --launch open <url>` (carry your \
+                     login over with `cookies export` | `cookies set --curl`), \
+                     then run `upload` in that session. \
+                     See https://github.com/leeguooooo/chrome-use/issues/13"
+                        .to_string()
+                } else {
+                    e
+                }
+            })?;
 
         Ok(())
     }
