@@ -672,6 +672,8 @@ and [references/authentication.md](references/authentication.md).
   `chrome-use skills get electron`
 - **Slack workspace automation**: `chrome-use skills get slack`
 - **Exploratory testing / QA / bug hunts**: `chrome-use skills get dogfood`
+- **Re-runnable test suites (frontend "unit tests")**: `chrome-use skills get test`
+  — turn repeated checks into a `chrome-use test <suite.yaml>` regression suite
 - **Vercel Sandbox microVMs**: `chrome-use skills get vercel-sandbox`
 - **AWS Bedrock AgentCore cloud browser**: `chrome-use skills get agentcore`
 

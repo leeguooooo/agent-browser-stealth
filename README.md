@@ -205,6 +205,47 @@ chrome-use --launch --profile auto open https://x.com/home
 
 In CI environments, standalone mode is used automatically.
 
+## Automated testing (`chrome-use test`)
+
+Turn the repetitive "open it, click around, check it's right" work into a
+**re-runnable suite** — unit tests for the frontend. Write cases in YAML; steps
+reuse chrome-use's own commands and assertions compile to a single check:
+
+```yaml
+# smoke.yaml
+suite: chatgpt smoke
+setup:
+  - account: chatgpt/huayue          # inject a cookie-use login (optional)
+cases:
+  - name: home loads logged in
+    steps:
+      - open: https://chatgpt.com/
+      - wait: { load: networkidle }
+    assert:
+      - url: { contains: chatgpt.com }
+      - visible: "#prompt-textarea"
+```
+
+```bash
+chrome-use test smoke.yaml                     # launches an isolated browser, runs cases
+chrome-use test smoke.yaml --session default   # …or against your connected Chrome
+```
+
+```
+suite: chatgpt smoke  (session cu-test)
+  ✓ home loads logged in   1.2s
+  ✗ composer takes text    0.8s
+      assert text "#prompt-textarea" contains "hi" → got ""
+      ↳ cu-test-artifacts/composer-takes-text.png
+2 cases · 1 passed · 1 failed
+```
+
+Exit code is non-zero if any case fails (drop it into CI), and failed cases save
+a screenshot. Assertions: `url` · `visible` · `hidden` · `text` · `count` ·
+`eval`. Steps: `open` · `click` · `fill` · `type` · `press` · `wait` · `scroll`
+· `eval`. Full guide: `chrome-use skills get test`. Found a regression? Add a
+case — the suite gets more valuable the more you use it.
+
 ## Anti-detection
 
 <img src="assets/shield.png" alt="stealth shield" width="320" align="right" />
