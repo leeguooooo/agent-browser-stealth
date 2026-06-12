@@ -1328,11 +1328,11 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
                             usage: "cookies transfer --from <profile> [--domain <domain>]",
                         });
                     }
-                    return Ok(json!({
+                    Ok(json!({
                         "id": id,
                         "action": "cookies_set",
                         "cookies": cookies,
-                    }));
+                    }))
                 }
                 "set" => {
                     // --curl <file> mode: import cookies from a JSON array,
