@@ -11,6 +11,7 @@ mod install;
 mod native;
 mod output;
 mod skills;
+mod test_runner;
 #[cfg(test)]
 mod test_utils;
 mod upgrade;
@@ -719,6 +720,19 @@ fn main() {
     {
         run_cookies_export(&clean, &flags);
         return;
+    }
+
+    // Handle `test <suite.yaml>`: run a browser test suite. It orchestrates by
+    // re-invoking this binary per step, so it lives outside the normal dispatch.
+    if clean.first().map(|s| s.as_str()) == Some("test") {
+        let Some(suite) = clean.get(1) else {
+            eprintln!(
+                "{} usage: chrome-use test <suite.yaml> [--launch | --session <name>]",
+                color::error_indicator()
+            );
+            exit(2);
+        };
+        exit(test_runner::run_test(suite, &flags));
     }
 
     // Handle skills command (doesn't need daemon)

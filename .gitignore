@@ -75,3 +75,4 @@ out/
 # extension signing key (never commit) + local-only id record
 .secrets/
 *.pem
+/cu-test-artifacts
