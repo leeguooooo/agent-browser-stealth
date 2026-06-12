@@ -2877,6 +2877,15 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     Ok(json!({ "snapshot": tree, "origin": url, "refs": refs }))
 }
 
+/// Resolve a (possibly relative) saved-file path to an absolute one so the CLI
+/// echoes a path the agent can read regardless of the process cwd (issue #16).
+/// Falls back to the original string if the file can't be canonicalized.
+fn absolutize_saved_path(p: &str) -> String {
+    std::fs::canonicalize(p)
+        .map(|c| c.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| p.to_string())
+}
+
 async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
     let annotate = cmd
         .get("annotate")
@@ -2902,7 +2911,7 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
                 .map_err(|e| format!("Base64 decode error: {}", e))?;
                 std::fs::write(p, bytes)
                     .map_err(|e| format!("Failed to write screenshot: {}", e))?;
-                return Ok(json!({ "path": p }));
+                return Ok(json!({ "path": absolutize_saved_path(p) }));
             }
             let tmp = format!(
                 "/tmp/screenshot-{}.png",
@@ -2976,7 +2985,7 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
     )
     .await?;
 
-    let mut response = json!({ "path": result.path });
+    let mut response = json!({ "path": absolutize_saved_path(&result.path) });
     if !result.annotations.is_empty() {
         response["annotations"] = serde_json::to_value(&result.annotations)
             .map_err(|e| format!("Failed to serialize annotations: {}", e))?;

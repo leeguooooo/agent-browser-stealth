@@ -269,13 +269,19 @@ fn run_session(args: &[String], session: &str, json_mode: bool) {
                 .into_iter()
                 .map(|s| s.name)
                 .collect();
+            // The extension relay drives the user's live Chrome but isn't always
+            // registered as a launched daemon session — without surfacing it,
+            // `session list` says "No active sessions" while open/tab work fine,
+            // and agents misjudge the connection as down (issue #15).
+            let relay_up = connect::relay_url().is_some();
 
             if json_mode {
                 println!(
-                    r#"{{"success":true,"data":{{"sessions":{}}}}}"#,
-                    serde_json::to_string(&sessions).unwrap_or_default()
+                    r#"{{"success":true,"data":{{"sessions":{},"relay":{}}}}}"#,
+                    serde_json::to_string(&sessions).unwrap_or_default(),
+                    relay_up
                 );
-            } else if sessions.is_empty() {
+            } else if sessions.is_empty() && !relay_up {
                 println!("No active sessions");
             } else {
                 println!("Active sessions:");
@@ -286,6 +292,14 @@ fn run_session(args: &[String], session: &str, json_mode: bool) {
                         " ".to_string()
                     };
                     println!("{} {}", marker, s);
+                }
+                if relay_up && !sessions.iter().any(|s| s == session) {
+                    println!(
+                        "{} {} {}",
+                        color::cyan("→"),
+                        session,
+                        color::dim("(relay/extension → live Chrome)")
+                    );
                 }
             }
         }
