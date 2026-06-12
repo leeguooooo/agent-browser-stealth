@@ -586,6 +586,17 @@ fn main() {
         return;
     }
 
+    // Hidden update-check worker, spawned detached by maybe_notify_update() to
+    // refresh the cached latest version without blocking a real command.
+    if env::args().nth(1).as_deref() == Some("__update-check") {
+        upgrade::run_update_check();
+        return;
+    }
+
+    // Non-blocking "update available" hint (stderr only; self-skips meta
+    // commands, daemon mode, CI, and the opt-out env vars).
+    upgrade::maybe_notify_update();
+
     // Native daemon mode: when AGENT_BROWSER_DAEMON is set, run as the daemon process
     if env::var("AGENT_BROWSER_DAEMON").is_ok() {
         // Ignore SIGPIPE so the daemon isn't killed when the parent drops
