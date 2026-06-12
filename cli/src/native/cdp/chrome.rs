@@ -180,6 +180,30 @@ fn webrtc_ip_handling_policy(has_proxy: bool) -> Option<&'static str> {
     }
 }
 
+/// Seed a throwaway `--launch` profile with a human-readable name
+/// (`agent-browser (<session>)`) so Chrome's toolbar profile chip identifies the
+/// window as an agent's test profile rather than an anonymous empty profile
+/// (issue #9). The name lives in `Local State`'s `profile.info_cache.<dir>.name`
+/// — the same field `resolve_chrome_profile("auto")` reads. Best-effort: any
+/// write error is ignored (the profile still works, just unlabeled).
+fn write_temp_profile_label(dir: &std::path::Path) {
+    let session = std::env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string());
+    let label = format!("agent-browser ({session})");
+    let local_state = serde_json::json!({
+        "profile": {
+            "info_cache": {
+                "Default": { "name": label, "is_using_default_name": false }
+            }
+        }
+    });
+    let _ = std::fs::write(dir.join("Local State"), local_state.to_string());
+    let default_dir = dir.join("Default");
+    if std::fs::create_dir_all(&default_dir).is_ok() {
+        let prefs = serde_json::json!({ "profile": { "name": label } });
+        let _ = std::fs::write(default_dir.join("Preferences"), prefs.to_string());
+    }
+}
+
 fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
     let mut args = vec![
         "--remote-debugging-port=0".to_string(),
@@ -266,6 +290,10 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
             std::env::temp_dir().join(format!("agent-browser-chrome-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create temp profile dir: {}", e))?;
+        // Label the throwaway profile so a human watching the desktop can tell
+        // which agent session owns this otherwise-anonymous empty-profile window,
+        // instead of "which profile is this? where did it come from?" (issue #9).
+        write_temp_profile_label(&dir);
         args.push(format!("--user-data-dir={}", dir.display()));
         (dir.clone(), Some(dir))
     };
@@ -1887,6 +1915,38 @@ mod tests {
         .unwrap();
         assert_eq!(resolve_chrome_profile(&tmp, "auto").unwrap(), "Profile 2");
         assert_eq!(resolve_chrome_profile(&tmp, "AUTO").unwrap(), "Profile 2");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_write_temp_profile_label_names_the_profile() {
+        // issue #9: a throwaway --launch profile must carry a human-readable name
+        // in Local State (the field Chrome's profile chip reads) + Preferences.
+        let tmp = std::env::temp_dir().join("ab-label-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        write_temp_profile_label(&tmp);
+
+        let ls: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.join("Local State")).unwrap())
+                .unwrap();
+        let name = ls["profile"]["info_cache"]["Default"]["name"]
+            .as_str()
+            .unwrap();
+        assert!(name.starts_with("agent-browser ("), "got: {name}");
+        assert_eq!(
+            ls["profile"]["info_cache"]["Default"]["is_using_default_name"],
+            serde_json::json!(false)
+        );
+
+        let prefs: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(tmp.join("Default/Preferences")).unwrap(),
+        )
+        .unwrap();
+        assert!(prefs["profile"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("agent-browser ("));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

@@ -547,9 +547,13 @@ fn main() {
     // Skipped under CI (force_launch is implicit there and login isn't expected).
     if flags.force_launch && flags.profile.is_none() && env::var("CI").is_err() {
         eprintln!(
-            "⚠ --launch uses a temporary EMPTY browser profile (no cookies, no login). \
-             For logged-in sites, add `--profile auto` (or `--profile Default`) to reuse \
-             your real Chrome session."
+            "⚠ --launch opens a fresh, isolated test profile (no cookies, no login, no \
+             extensions). The window is labelled `agent-browser (<session>)` in Chrome's \
+             profile menu so you can tell it apart from your real browser.\n  \
+             • reuse your real Chrome (cookies/login/extensions): `--profile auto` \
+             (or set AGENT_BROWSER_PROFILE=auto once)\n  \
+             • load an unpacked extension into the test profile: \
+             `--args \"--load-extension=<dir>\"`"
         );
     }
 

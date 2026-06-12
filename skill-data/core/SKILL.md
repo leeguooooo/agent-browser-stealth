@@ -73,6 +73,17 @@ popup never fires. `agent-browser extension connect` is the explicit form of the
 same path. Zero-confirmation, zero-token. Use `--launch` instead when a fresh,
 isolated browser is fine.
 
+`--launch` opens an **isolated, empty test profile** — no cookies, no login, no
+extensions (so the extension-relay path is off). Its window is labelled
+`agent-browser (<session>)` in Chrome's profile menu so a human watching the
+desktop knows which session owns it. If a launched session needs more:
+
+- **Real cookies / login / extensions** → drop `--launch`, use `--profile auto`
+  (reuses the user's real Chrome profile), or set `AGENT_BROWSER_PROFILE=auto`
+  once so every call does it by default.
+- **A specific unpacked extension in the test profile** →
+  `--launch --args "--load-extension=<dir>"`.
+
 **If you DO hit the "Allow remote debugging?" dialog**, don't keep retrying (every
 attempt re-pops it). One of two things is true:
 
