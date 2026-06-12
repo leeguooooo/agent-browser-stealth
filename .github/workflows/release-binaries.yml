@@ -133,6 +133,9 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
+          # fetch-depth:0 gets history, but the tag refs the changelog needs
+          # aren't always present in a detached-HEAD tag checkout — pull them in.
+          git fetch --tags --force --quiet origin 2>/dev/null || true
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
           {
