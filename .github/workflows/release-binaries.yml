@@ -39,6 +39,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0 # full history so the changelog step can diff tags
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -125,6 +126,29 @@ jobs:
       - name: List assets
         run: ls -la dist
 
+      # Build the changelog from conventional-commit subjects since the previous
+      # tag. GitHub's built-in generate_release_notes only lists merged PRs,
+      # which is near-empty for this commit-to-main workflow — so we render the
+      # commit log ourselves and every release shows what actually changed.
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          {
+            echo "notes<<__NOTES_EOF__"
+            echo "## What changed"
+            echo ""
+            if [ -n "$PREV" ]; then
+              git log "${PREV}..${TAG}" --no-merges --pretty='- %s' | grep -v '^- chore(release)' || true
+              echo ""
+              echo "**Full changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
+            else
+              git log "${TAG}" --no-merges --pretty='- %s' | grep -v '^- chore(release)' || true
+            fi
+            echo "__NOTES_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Attach to release
         uses: softprops/action-gh-release@v3
         with:
@@ -133,10 +157,8 @@ jobs:
             dist/*.tar.gz
             dist/*.tar.gz.sha256
           fail_on_unmatched_files: true
-          # Auto-generate a changelog (commits + merged PRs since the previous
-          # tag) so every release shows what actually changed, instead of an
-          # empty body. The first matrix job to run creates the release with
-          # these notes; `append_body: false` keeps later jobs from clobbering
-          # or duplicating them while they attach their platform's binaries.
-          generate_release_notes: true
+          # The commit-based changelog so every release shows what changed. The
+          # first matrix job to run creates the release with these notes;
+          # append_body:false keeps later platform jobs from duplicating them.
+          body: ${{ steps.changelog.outputs.notes }}
           append_body: false
