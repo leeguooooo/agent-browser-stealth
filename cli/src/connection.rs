@@ -88,8 +88,39 @@ impl Connection {
     }
 }
 
+/// Brand-compat config directory basename. The project renamed
+/// `agent-browser` → `chrome-use`, but this dotfile dir is invisible internal
+/// plumbing: it's shared with the native-messaging host (the `relay-cdp-url`
+/// handoff) and holds saved auth/daemon state. Renaming it would break existing
+/// installs and re-pop the "Allow remote debugging?" dialog when the relay
+/// can't be located. So decide ONCE per run: prefer the new `.chrome-use`, but
+/// keep using an existing `.agent-browser` install if that's the only one
+/// present; fresh installs get `.chrome-use`. `dotted` picks the home-dir form
+/// (`.chrome-use`) vs the XDG/tmp subdir form (`chrome-use`); both agree.
+pub fn config_dir_basename(dotted: bool) -> &'static str {
+    let prefer_old = dirs::home_dir()
+        .map(|h| !h.join(".chrome-use").exists() && h.join(".agent-browser").exists())
+        .unwrap_or(false);
+    match (prefer_old, dotted) {
+        (true, true) => ".agent-browser",
+        (true, false) => "agent-browser",
+        (false, true) => ".chrome-use",
+        (false, false) => "chrome-use",
+    }
+}
+
+/// The home-based config dir (`~/.chrome-use`, or `~/.agent-browser` on an
+/// existing install — see [`config_dir_basename`]). Single source of truth so
+/// sockets, auth, and the relay handoff all agree within one run.
+pub fn config_home() -> PathBuf {
+    match dirs::home_dir() {
+        Some(home) => home.join(config_dir_basename(true)),
+        None => env::temp_dir().join(config_dir_basename(false)),
+    }
+}
+
 /// Get the base directory for socket/pid files.
-/// Priority: AGENT_BROWSER_SOCKET_DIR > XDG_RUNTIME_DIR > ~/.chrome-use > tmpdir
+/// Priority: AGENT_BROWSER_SOCKET_DIR > XDG_RUNTIME_DIR > config_home() > tmpdir
 pub fn get_socket_dir() -> PathBuf {
     // 1. Explicit override (ignore empty string)
     if let Ok(dir) = env::var("AGENT_BROWSER_SOCKET_DIR") {
@@ -101,17 +132,17 @@ pub fn get_socket_dir() -> PathBuf {
     // 2. XDG_RUNTIME_DIR (Linux standard, ignore empty string)
     if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
         if !runtime_dir.is_empty() {
-            return PathBuf::from(runtime_dir).join("chrome-use");
+            return PathBuf::from(runtime_dir).join(config_dir_basename(false));
         }
     }
 
     // 3. Home directory fallback (like Docker Desktop's ~/.docker/run/)
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".chrome-use");
+    if dirs::home_dir().is_some() {
+        return config_home();
     }
 
     // 4. Last resort: temp dir
-    env::temp_dir().join("chrome-use")
+    env::temp_dir().join(config_dir_basename(false))
 }
 
 #[cfg(unix)]

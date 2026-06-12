@@ -399,10 +399,23 @@ fn random_guid() -> String {
 }
 
 /// Where the daemon/CLI reads the relay's CDP WebSocket URL (perms 600).
+///
+/// Cross-binary handoff: the native-messaging *host* writes it and the CLI reads
+/// it, but the two may be different binaries under different brand dirs after
+/// the agent-browser → chrome-use rename. Read from whichever brand dir actually
+/// has the file (an old `agent-browser` host writes `~/.agent-browser`; a
+/// `chrome-use` host writes `~/.chrome-use`); default to [`config_home`].
 fn relay_url_path() -> PathBuf {
-    dirs::home_dir()
-        .map(|h| h.join(".chrome-use").join("relay-cdp-url"))
-        .unwrap_or_else(|| PathBuf::from("/tmp/ab-relay-cdp-url"))
+    if let Some(home) = dirs::home_dir() {
+        for base in [".chrome-use", ".agent-browser"] {
+            let p = home.join(base).join("relay-cdp-url");
+            if p.exists() {
+                return p;
+            }
+        }
+        return crate::connection::config_home().join("relay-cdp-url");
+    }
+    PathBuf::from("/tmp/ab-relay-cdp-url")
 }
 
 /// The live relay CDP WebSocket URL, if the native-messaging host is running
