@@ -16,7 +16,7 @@
 // attach + Target handling; the transport is rewritten from WebSocket+token to
 // native messaging.
 
-const HOST_NAME = 'com.leeguoo.chrome_use'
+const HOST_NAME = 'com.agent_browser.connect'
 const SKIP_URL = /^(chrome|chrome-extension|devtools|chrome-untrusted|edge|about):/i
 
 /** @type {chrome.runtime.Port|null} */

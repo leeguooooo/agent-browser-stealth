@@ -6,6 +6,6 @@ from **openclaw-browser-relay** by chengyixu
 
 Changes for chrome-use: rebranded to "chrome-use connect"; the
 transport is rewritten from a localhost WebSocket + shared token to Chrome
-**native messaging** (host `com.leeguoo.chrome_use`) — no port, no token,
+**native messaging** (host `com.agent_browser.connect`) — no port, no token,
 Chrome authenticates the extension to the host by id. WebSocket/token/options
 code removed.

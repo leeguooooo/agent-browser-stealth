@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 /// Native-messaging host name; must match `HOST_NAME` in the extension and the
 /// manifest filename.
-pub const HOST_NAME: &str = "com.leeguoo.chrome_use";
+pub const HOST_NAME: &str = "com.agent_browser.connect";
 
 /// Stable id of the `ab-connect` extension, pinned by the `key` in its
 /// manifest.json (and the signing key of the published `.crx`). Chrome only lets
