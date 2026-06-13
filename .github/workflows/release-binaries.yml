@@ -39,7 +39,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-          fetch-depth: 0 # full history so the changelog step can diff tags
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -117,6 +116,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The release job is separate from the build matrix and has no repo by
+      # default — check it out (full history + tags) so the changelog step has a
+      # git repo to diff. Without this, `git` failed with "not a git repository"
+      # and the changelog came out empty.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
