@@ -297,6 +297,11 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
         // Snapshot
         if let Some(snapshot) = data.get("snapshot").and_then(|v| v.as_str()) {
             print_with_boundaries(snapshot, origin, opts);
+            // Canvas-app hint: the tree was near-empty but the page paints to a
+            // <canvas>, so refs are a dead end — point at the screenshot path.
+            if let Some(note) = data.get("note").and_then(|v| v.as_str()) {
+                eprintln!("{}", color::dim(note));
+            }
             return;
         }
         // Title
@@ -3066,6 +3071,9 @@ Core Commands:
   type <sel> <text>          Type into element
   fill <sel> <text>          Clear and fill
   press <key>                Press key (Enter, Tab, Control+a)
+  keydown <key>              Hold a key down (no auto-release) — for games/shortcuts
+  keyup <key>                Release a held key. Pair with keydown to hold-to-move:
+                             `keydown d` … `keyup d`
   keyboard type <text>       Type text with real keystrokes (no selector)
   keyboard inserttext <text> Insert text without key events
   hover <sel>                Hover element

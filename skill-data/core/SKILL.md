@@ -226,8 +226,11 @@ chrome-use hover @e1                   # hover
 chrome-use focus @e1                   # focus (useful before keyboard input)
 chrome-use fill @e2 "hello"            # clear then type
 chrome-use type @e2 " world"           # type without clearing
-chrome-use press Enter                 # press a key at current focus
+chrome-use press Enter                 # press a key at current focus (down+up)
 chrome-use press Control+a             # key combination
+chrome-use keydown d                   # HOLD a key down (no auto-release)
+chrome-use keyup d                     # release it — pair them to hold-to-move
+                                          # in a game: `keydown d; sleep; keyup d`
 chrome-use check @e3                   # check checkbox
 chrome-use uncheck @e3                 # uncheck
 chrome-use select @e4 "option-value"   # native <select> only
@@ -295,6 +298,23 @@ chrome-use click --coords 449,320   # same, explicit flag
 ```
 
 A bare-number argument is always a coordinate, never a selector.
+
+### Canvas / WebGL apps (games, map & 3D viewers, drawing tools)
+
+These paint everything to a `<canvas>` and expose **almost no accessibility
+tree**, so `snapshot` comes back near-empty and refs are a dead end. `snapshot`
+detects this and prints a one-line hint. Drive them the screenshot way:
+
+```bash
+chrome-use screenshot /tmp/s.png       # SEE the state (your only read path —
+                                          # eval/get text return nothing useful)
+chrome-use click 640 360               # interact by viewport coordinate
+chrome-use keydown d; sleep 0.6; chrome-use keyup d   # hold-to-move
+chrome-use press Space                 # discrete actions (jump/attack/confirm)
+```
+
+Each command is a ~250ms round-trip, so this is fine for turn-based / canvas
+*apps* but too slow to play a real-time 60fps action game frame-by-frame.
 
 ## Waiting (read this)
 

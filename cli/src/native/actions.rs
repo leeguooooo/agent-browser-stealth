@@ -2888,7 +2888,32 @@ async fn handle_snapshot(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
         })
         .collect();
 
-    Ok(json!({ "snapshot": tree, "origin": url, "refs": refs }))
+    let ref_count = refs.len();
+    let mut out = json!({ "snapshot": tree, "origin": url, "refs": refs });
+
+    // Canvas/WebGL apps (games, map/3D viewers, drawing tools) paint to a
+    // <canvas> and expose almost no accessibility tree, so `snapshot` comes back
+    // near-empty and agents get stuck looking for refs that will never exist
+    // (dogfood: the Dead Cell game). When the tree is sparse but a canvas
+    // dominates the viewport, tell them to switch to the screenshot-driven path.
+    if ref_count < 3 {
+        let canvas_js =
+            "(() => { const c = document.querySelector('canvas'); if (!c) return false; \
+                         const r = c.getBoundingClientRect(); \
+                         return r.width * r.height > innerWidth * innerHeight * 0.5; })()";
+        if let Ok(v) = mgr.evaluate(canvas_js, None).await {
+            if v.as_bool() == Some(true) {
+                out["note"] = json!(
+                    "This page renders to a <canvas> (game / WebGL / editor) and exposes almost no \
+                     accessibility tree — refs won't help. Use `screenshot` to see it, coordinate \
+                     `click <x> <y>` to interact, and `keydown`/`keyup`/`press` for keyboard \
+                     (hold-to-move: `keydown d` … `keyup d`)."
+                );
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 /// Resolve a (possibly relative) saved-file path to an absolute one so the CLI

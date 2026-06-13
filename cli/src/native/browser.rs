@@ -166,6 +166,25 @@ fn resolve_active_index(
     active_page_index
 }
 
+/// Whether the resolved active page is a tab the session created (its target_id
+/// is in `created_targets`). Pure core of [`BrowserManager::active_is_session_owned`]
+/// so the relay no-hijack rule is unit-testable without a live browser.
+fn active_index_is_owned(
+    pages: &[PageInfo],
+    active_target_id: Option<&str>,
+    active_page_index: usize,
+    created_targets: &HashSet<String>,
+) -> bool {
+    pages
+        .get(resolve_active_index(
+            pages,
+            active_target_id,
+            active_page_index,
+        ))
+        .map(|p| created_targets.contains(&p.target_id))
+        .unwrap_or(false)
+}
+
 /// Converts common error messages into AI-friendly, actionable descriptions.
 pub fn to_ai_friendly_error(error: &str) -> String {
     let lower = error.to_lowercase();
@@ -799,6 +818,20 @@ impl BrowserManager {
         )
     }
 
+    /// Whether the resolved active page is a tab THIS session created (via
+    /// `Target.createTarget` — `tab new`, `ensure_page`, or the first `open`).
+    /// On the shared real browser a fresh session also passively attaches to the
+    /// user's existing tabs; those are NOT owned, and navigating one would
+    /// clobber the user's page. Used to gate `navigate` on the relay.
+    fn active_is_session_owned(&self) -> bool {
+        active_index_is_owned(
+            &self.pages,
+            self.active_target_id.as_deref(),
+            self.active_page_index,
+            &self.created_targets,
+        )
+    }
+
     /// Pin the current active page by target_id so later commands stick to it.
     /// Call after any explicit open / tab new / tab switch.
     fn pin_active_target(&mut self) {
@@ -816,6 +849,18 @@ impl BrowserManager {
     }
 
     pub async fn navigate(&mut self, url: &str, wait_until: WaitUntil) -> Result<Value, String> {
+        // On the shared real browser (extension relay), a fresh session only
+        // passively attached to the user's existing tabs — it doesn't own any. The
+        // pre-fix code made one of those the active tab, so the first `open` then
+        // navigated (clobbered) the user's page: in dogfooding an `open` replaced a
+        // half-filled form with the target site. If the active tab isn't one we
+        // created, open our own tab in this session's group and navigate THAT, so
+        // the user's (and other sessions') tabs are never hijacked. Off the relay
+        // (a browser we launched) reusing the active tab is correct, so this is
+        // gated on `agent_group()`.
+        if self.agent_group().is_some() && !self.active_is_session_owned() {
+            self.tab_new(None, None).await?;
+        }
         let session_id = self.active_session_id()?.to_string();
         let mut lifecycle_rx = self.client.subscribe();
 
@@ -2429,6 +2474,35 @@ mod tests {
         // the index rather than panicking or returning a bogus slot.
         let pages = vec![page("A"), page("B")];
         assert_eq!(resolve_active_index(&pages, Some("CLOSED"), 1), 1);
+    }
+
+    // --- issue: `open` must not hijack a user's tab on the relay (dogfood) ---
+
+    #[test]
+    fn active_not_owned_when_only_user_tabs_discovered() {
+        // A fresh relay session passively attached to the user's tabs but created
+        // none — so navigate must NOT reuse the active tab (it'd clobber the
+        // user's page); it has to open its own first.
+        let pages = vec![page("USER_A"), page("USER_B")];
+        let created = HashSet::new();
+        assert!(!active_index_is_owned(&pages, Some("USER_A"), 0, &created));
+    }
+
+    #[test]
+    fn active_owned_when_session_created_the_tab() {
+        let pages = vec![page("USER_A"), page("OURS")];
+        let mut created = HashSet::new();
+        created.insert("OURS".to_string());
+        // Active pinned to the tab we created → safe to navigate it.
+        assert!(active_index_is_owned(&pages, Some("OURS"), 1, &created));
+        // But pinned to the user's tab → not owned, even though we own another.
+        assert!(!active_index_is_owned(&pages, Some("USER_A"), 0, &created));
+    }
+
+    #[test]
+    fn active_not_owned_when_no_pages() {
+        let created = HashSet::new();
+        assert!(!active_index_is_owned(&[], None, 0, &created));
     }
 
     #[test]
