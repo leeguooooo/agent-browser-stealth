@@ -2531,6 +2531,20 @@ async fn handle_navigate(cmd: &Value, state: &mut DaemonState) -> Result<Value, 
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;
+
+    // `--reuse-tab`: if a tab already shows this URL (same origin+path), switch
+    // to it instead of navigating — preserves any in-page state and stops
+    // re-`open` from piling up duplicate tabs on rebind (issue #21).
+    if cmd
+        .get("reuseTab")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        if let Ok(Some(switched)) = mgr.reuse_tab_for_url(url).await {
+            return Ok(switched);
+        }
+    }
+
     let result = mgr.navigate(url, wait_until).await?;
     // Adaptive humanize: sample the freshly loaded page for known behavioural
     // anti-bot vendors and escalate this session to Human if any are present.
@@ -4355,8 +4369,12 @@ async fn handle_keyboard(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
 // Phase 5 handlers
 // ---------------------------------------------------------------------------
 
-async fn handle_tab_list(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
-    let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+async fn handle_tab_list(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
+    let mgr = state.browser.as_mut().ok_or("Browser not launched")?;
+    // Re-sync with the live browser so the list reflects tabs opened by other
+    // sessions or re-attached after a cross-process nav, and drops gone ones
+    // (issue #21). Best-effort: a stale list still beats erroring the command.
+    mgr.resync_targets().await.ok();
     let tabs = mgr.tab_list();
     // Echo `full` so the formatter prints untruncated URLs (issue #19).
     if cmd.get("full").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -4394,9 +4412,20 @@ async fn handle_tab_switch(cmd: &Value, state: &mut DaemonState) -> Result<Value
     let tab_ref_str = cmd
         .get("tabId")
         .and_then(|v| v.as_str())
-        .ok_or("Missing 'tabId' parameter (expected `t<N>` or a label)")?;
-    let tab_ref = super::browser::TabRef::parse(tab_ref_str)?;
-    let tab_id = mgr.resolve_tab_ref(&tab_ref)?;
+        .ok_or("Missing 'tabId' parameter (expected `t<N>`, a label, or a targetId)")?;
+    // Re-sync first so a tab opened by another session, or one that re-attached
+    // after a cross-process nav, is adoptable from here (issue #21).
+    mgr.resync_targets().await.ok();
+    // A CDP `targetId` (shown in `tab list`) is stable across sessions, so accept
+    // it directly for adopting a specific pre-existing tab — falling back to the
+    // per-session `t<N>` / label form.
+    let tab_id = match mgr.tab_id_for_target(tab_ref_str) {
+        Some(id) => id,
+        None => {
+            let tab_ref = super::browser::TabRef::parse(tab_ref_str)?;
+            mgr.resolve_tab_ref(&tab_ref)?
+        }
+    };
     state.ref_map.clear();
     state.iframe_sessions.clear();
     state.active_frame_id = None;

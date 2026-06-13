@@ -370,6 +370,12 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
             if flags.provider.is_some() {
                 nav_cmd["waitUntil"] = json!("none");
             }
+            // `--reuse-tab`: adopt an existing tab already on this URL instead of
+            // navigating/spawning a new one (issue #21 — avoids duplicate tabs on
+            // rebind, preserves in-page state).
+            if rest.iter().any(|a| *a == "--reuse-tab" || *a == "--reuse") {
+                nav_cmd["reuseTab"] = json!(true);
+            }
             // Explicit readiness override (issue #10): SPAs whose `load` event
             // never fires (a long-lived XHR/websocket holds it open) hang out the
             // load-event wait. `--wait-until domcontentloaded` returns as soon as
@@ -3573,6 +3579,24 @@ mod tests {
         let cmd = parse_command(&args("open example.com"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "navigate");
         assert_eq!(cmd["url"], "https://example.com");
+    }
+
+    #[test]
+    fn test_navigate_reuse_tab_flag() {
+        let cmd = parse_command(
+            &args("open https://example.com --reuse-tab"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["action"], "navigate");
+        assert_eq!(cmd["reuseTab"], true);
+        // Alias.
+        let cmd2 =
+            parse_command(&args("open https://example.com --reuse"), &default_flags()).unwrap();
+        assert_eq!(cmd2["reuseTab"], true);
+        // Absent by default.
+        let cmd3 = parse_command(&args("open https://example.com"), &default_flags()).unwrap();
+        assert!(cmd3.get("reuseTab").is_none());
     }
 
     #[test]

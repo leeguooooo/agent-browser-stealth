@@ -106,6 +106,18 @@ pub(crate) fn should_track_target(target: &TargetInfo) -> bool {
         && (target.url.is_empty() || !is_internal_chrome_target(&target.url))
 }
 
+/// Origin + path of a URL, dropping the query string and fragment, for
+/// `--reuse-tab` matching. SPA/SSO URLs carry volatile `?client_id=…&state=…`
+/// and `#/route` parts, so two opens of the "same" page rarely match
+/// byte-for-byte; comparing origin+path lands the reuse on the right tab.
+/// Returns the input unchanged if it doesn't parse as a URL.
+fn normalize_url_for_match(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(u) => format!("{}{}", u.origin().ascii_serialization(), u.path()),
+        Err(_) => url.to_string(),
+    }
+}
+
 fn update_page_target_info_in_pages(pages: &mut [PageInfo], target: &TargetInfo) -> bool {
     if let Some(page) = pages.iter_mut().find(|p| p.target_id == target.target_id) {
         page.url = target.url.clone();
@@ -1184,20 +1196,166 @@ impl BrowserManager {
     }
 
     pub fn tab_list(&self) -> Vec<Value> {
+        let active = self.resolved_active_index();
         self.pages
             .iter()
             .enumerate()
             .map(|(i, p)| {
                 json!({
                     "tabId": format_tab_id(p.tab_id),
+                    // Stable CDP target id. Unlike `t<N>` (per-session, reassigned
+                    // each connect) this is the same handle across every session
+                    // attached to the relayed Chrome, so it's how you adopt a
+                    // specific pre-existing tab from another session (issue #21).
+                    "targetId": p.target_id,
                     "label": p.label,
                     "title": p.title,
                     "url": p.url,
                     "type": p.target_type,
-                    "active": i == self.active_page_index,
+                    "active": i == active,
                 })
             })
             .collect()
+    }
+
+    /// Stable `tab_id` for a page identified by its CDP `targetId`, if tracked.
+    /// Lets callers adopt a tab by the cross-session-stable target id.
+    pub fn tab_id_for_target(&self, target_id: &str) -> Option<u32> {
+        self.pages
+            .iter()
+            .find(|p| p.target_id == target_id)
+            .map(|p| p.tab_id)
+    }
+
+    /// Re-pull the live target set and reconcile `self.pages`: adopt tabs that
+    /// appeared since connect (another session's tab, or one that just
+    /// re-attached after a cross-process nav), refresh url/title on known tabs,
+    /// and drop tabs that are gone (clearing phantom rows). Never steals focus —
+    /// the active tab is preserved, and re-pinned if it was pruned. Powers a live
+    /// `tab list` and adopt-by-targetId so a fresh session can reach a stranded,
+    /// still-filled tab without reloading it (issue #21).
+    pub async fn resync_targets(&mut self) -> Result<(), String> {
+        self.client
+            .send_command_typed::<_, Value>(
+                "Target.setDiscoverTargets",
+                &SetDiscoverTargetsParams { discover: true },
+                None,
+            )
+            .await?;
+        let result: GetTargetsResult = self
+            .client
+            .send_command_typed("Target.getTargets", &json!({}), None)
+            .await?;
+        let live: Vec<TargetInfo> = result
+            .target_infos
+            .into_iter()
+            .filter(should_track_target)
+            .collect();
+        let live_ids: HashSet<String> = live.iter().map(|t| t.target_id.clone()).collect();
+
+        for target in &live {
+            if self.update_page_target_info(target) {
+                continue;
+            }
+            // A target this session hasn't tracked yet — attach and add it in the
+            // background so it's listable/adoptable without stealing the active tab.
+            let attach_result: AttachToTargetResult = match self
+                .client
+                .send_command_typed(
+                    "Target.attachToTarget",
+                    &AttachToTargetParams {
+                        target_id: target.target_id.clone(),
+                        flatten: true,
+                    },
+                    None,
+                )
+                .await
+            {
+                Ok(r) => r,
+                // The tab may have closed between getTargets and attach, or be a
+                // restricted page — skip it rather than failing the whole resync.
+                Err(_) => continue,
+            };
+            let tab_id = self.assign_tab_id();
+            self.add_background_page(PageInfo {
+                tab_id,
+                label: None,
+                target_id: target.target_id.clone(),
+                session_id: attach_result.session_id.clone(),
+                url: target.url.clone(),
+                title: target.title.clone(),
+                target_type: target.target_type.clone(),
+            });
+            let _ = self.enable_domains(&attach_result.session_id).await;
+        }
+
+        // Drop tabs that no longer exist so `tab list` doesn't show phantom rows.
+        let gone: Vec<String> = self
+            .pages
+            .iter()
+            .map(|p| p.target_id.clone())
+            .filter(|tid| !live_ids.contains(tid))
+            .collect();
+        for tid in gone {
+            self.remove_page_by_target_id(&tid);
+        }
+
+        // Refresh url/title from each live tab. The relay only stamps target_info
+        // on attach, so after a navigation its cached url/title go stale (or stay
+        // blank for a tab attached at about:blank) — which made `tab list` show
+        // blank rows you couldn't tell apart, defeating the point of listing them
+        // to pick a tab to adopt (issue #21). `Target.getTargetInfo` is a plain
+        // CDP read (no Runtime fingerprint), one cheap call per tab.
+        let sessions: Vec<(usize, String)> = self
+            .pages
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, p.session_id.clone()))
+            .collect();
+        for (i, sid) in sessions {
+            if sid.is_empty() {
+                continue;
+            }
+            if let Ok(resp) = self
+                .client
+                .send_command("Target.getTargetInfo", None, Some(&sid))
+                .await
+            {
+                if let Some(ti) = resp.get("targetInfo") {
+                    if let Some(page) = self.pages.get_mut(i) {
+                        if let Some(u) = ti.get("url").and_then(|v| v.as_str()) {
+                            if !u.is_empty() {
+                                page.url = u.to_string();
+                            }
+                        }
+                        if let Some(t) = ti.get("title").and_then(|v| v.as_str()) {
+                            page.title = t.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// If `--reuse-tab` and a tracked tab already shows `url`, switch to it
+    /// (without reloading, so any in-page state survives) and return its info.
+    /// Returns `None` when no tab matches and the caller should navigate/create.
+    /// Matches on exact URL or the same origin+path (ignoring query/fragment) so
+    /// a re-`open` of a stable entry URL lands on the existing tab instead of
+    /// piling up duplicates (issue #21).
+    pub async fn reuse_tab_for_url(&mut self, url: &str) -> Result<Option<Value>, String> {
+        self.resync_targets().await.ok();
+        let want = normalize_url_for_match(url);
+        let tab_id = self
+            .pages
+            .iter()
+            .find(|p| !want.is_empty() && (p.url == url || normalize_url_for_match(&p.url) == want))
+            .map(|p| p.tab_id);
+        match tab_id {
+            Some(id) => Ok(Some(self.tab_switch_by_id(id).await?)),
+            None => Ok(None),
+        }
     }
 
     /// Resolve a user-supplied `TabRef` (either `t<N>` or a label) to the
@@ -2215,6 +2373,34 @@ mod tests {
             title: String::new(),
             target_type: "page".to_string(),
         }
+    }
+
+    // --- issue #21: --reuse-tab URL matching ignores query/fragment ---
+
+    #[test]
+    fn normalize_url_match_strips_query_and_fragment() {
+        // Two opens of the "same" SSO page differ only in volatile query/hash —
+        // they must normalize equal so --reuse-tab lands on the existing tab.
+        let a = normalize_url_for_match(
+            "https://login.account.rakuten.com/sso/authorize?client_id=x&state=abc#/sign_in",
+        );
+        let b = normalize_url_for_match(
+            "https://login.account.rakuten.com/sso/authorize?client_id=y&state=zzz#/forgot",
+        );
+        assert_eq!(a, b);
+        assert_eq!(a, "https://login.account.rakuten.com/sso/authorize");
+    }
+
+    #[test]
+    fn normalize_url_match_distinguishes_different_paths() {
+        let cart = normalize_url_for_match("https://cart.step.rakuten.co.jp/cart");
+        let order = normalize_url_for_match("https://cart.step.rakuten.co.jp/order");
+        assert_ne!(cart, order);
+    }
+
+    #[test]
+    fn normalize_url_match_passes_through_unparseable() {
+        assert_eq!(normalize_url_for_match("not a url"), "not a url");
     }
 
     // --- issue #14: a pinned target must keep commands on the right tab ---

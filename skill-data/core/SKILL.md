@@ -501,12 +501,26 @@ the same browser's existing targets, so a second session's first `open` can
 navigate a sibling's tab. For concurrent agents on one real Chrome, use the
 extension (each with a distinct `--session`), not raw `--cdp`.
 
-Because each session owns its own tab group, **one session cannot read another
-session's tabs** — a fresh session's `tab list` shows only its own (empty) group,
-not the tab the first session opened. So if a session's handle dies (e.g. a tab
-navigates across render processes), recover *that* session — reload, re-`open`
-the URL, or `daemon restart` — rather than opening a second session to read the
-first one's tab. There's no "settle in session A, attach session B to read it".
+Each session owns its own tab group and assigns its own `t<N>` indices (the same
+physical tab is `t8` in one session, `t1` in another), so `t<N>` is **not** a
+stable cross-session handle. To reach a *specific* tab from another session — e.g.
+a tab that was filled in a session whose handle later died — use the **stable CDP
+`targetId`**:
+
+```bash
+chrome-use tab list --full --session B   # re-syncs live tabs; prints `target: <id>` per row
+chrome-use tab <targetId> --session B    # adopt that exact tab, NO reload (state preserved)
+```
+
+`tab list` re-discovers the live tab set on every call, so a fresh session sees
+tabs other sessions opened (and re-attached ones), not just its own. Adopting by
+`targetId` lands session B on the stranded tab without reloading it, so a
+half-filled form survives. Still, the simplest recovery for a session whose own
+tab died is to recover *that* session (reload / re-`open` / `daemon restart`).
+
+To avoid piling up duplicate tabs when you re-`open` the same entry URL on
+rebind, pass **`--reuse-tab`**: if a tab already shows that URL (matched by
+origin+path), it switches to it instead of spawning a new one.
 
 ### Reset stuck daemon state
 

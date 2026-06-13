@@ -512,6 +512,14 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                 } else {
                     println!("{} [{}] {} - {}", marker, tab_id, title, url);
                 }
+                // `--full` also surfaces the stable cross-session CDP targetId so
+                // a stranded tab can be adopted from another session via
+                // `tab <targetId>` (issue #21).
+                if full {
+                    if let Some(target_id) = tab.get("targetId").and_then(|v| v.as_str()) {
+                        println!("      {}", color::dim(&format!("target: {}", target_id)));
+                    }
+                }
             }
             return;
         }
@@ -3116,7 +3124,12 @@ Storage:
   storage <local|session>    Manage web storage
 
 Tabs:
-  tab [new|list|close|<n>]   Manage tabs
+  tab [new|list|close|<ref>] Manage tabs (<ref> = t<N>, a label, or a CDP targetId)
+  tab list --full            Full URLs + stable cross-session targetId per tab
+  tab <targetId>             Adopt a specific tab (incl. another session's) by its
+                             stable targetId, no reload — preserves in-page state
+  open <url> --reuse-tab     Reuse an existing tab on that URL instead of spawning
+                             a duplicate (matches origin+path; preserves state)
 
 Diff:
   diff snapshot              Compare current vs last snapshot
