@@ -557,6 +557,48 @@ pub async fn press_key_with_modifiers(
     Ok(())
 }
 
+/// Dispatch a SINGLE key event (`keyDown` or `keyUp`) carrying the full key
+/// descriptor — `key`, `code`, `windowsVirtualKeyCode`/`nativeVirtualKeyCode`,
+/// and (on key-down) printable `text`. Powers the `keydown`/`keyup` commands.
+///
+/// The previous implementation sent only `{key}`, so games and shortcut handlers
+/// that read `event.code` (e.g. `"KeyD"`, `"ArrowRight"`) or `event.keyCode` saw
+/// nothing — a held key set no movement flag and did nothing (dogfood: holding a
+/// direction in a canvas platformer barely nudged the player). Sending the same
+/// descriptor `press` uses makes hold-to-move work regardless of which field the
+/// page keys off.
+pub async fn dispatch_single_key(
+    client: &CdpClient,
+    session_id: &str,
+    key: &str,
+    event_type: &str,
+) -> Result<(), String> {
+    let (key_name, code, key_code) = named_key_info(key);
+    // Printable text is only meaningful on key-down; key-up never inserts.
+    let text = if event_type == "keyDown" {
+        key_text(&key_name)
+    } else {
+        None
+    };
+    client
+        .send_command_typed::<_, Value>(
+            "Input.dispatchKeyEvent",
+            &DispatchKeyEventParams {
+                event_type: event_type.to_string(),
+                key: Some(key_name),
+                code: Some(code),
+                text: text.clone(),
+                unmodified_text: text,
+                windows_virtual_key_code: Some(key_code),
+                native_virtual_key_code: Some(key_code),
+                modifiers: None,
+            },
+            Some(session_id),
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn scroll(
     client: &CdpClient,
     session_id: &str,
