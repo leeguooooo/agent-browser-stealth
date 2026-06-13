@@ -3334,6 +3334,16 @@ async fn handle_press(cmd: &Value, state: &mut DaemonState) -> Result<Value, Str
     // Parse modifier+key chords like "Control+a", "Shift+Enter", "Control+Shift+a"
     let (actual_key, modifiers) = parse_key_chord(key);
 
+    // `--hold <ms>`: keyDown, wait, keyUp — all inside the daemon so the hold
+    // duration is precise (no shell-sleep / round-trip jitter). For games
+    // (hold-to-move/charge) and any press-and-hold interaction.
+    if let Some(ms) = cmd.get("hold").and_then(|v| v.as_u64()) {
+        interaction::dispatch_single_key(&mgr.client, &session_id, &actual_key, "keyDown").await?;
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+        interaction::dispatch_single_key(&mgr.client, &session_id, &actual_key, "keyUp").await?;
+        return Ok(json!({ "pressed": key, "heldMs": ms }));
+    }
+
     interaction::press_key_with_modifiers(&mgr.client, &session_id, &actual_key, modifiers).await?;
     Ok(json!({ "pressed": key }))
 }

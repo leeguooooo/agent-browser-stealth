@@ -3070,7 +3070,9 @@ Core Commands:
   dblclick <sel>             Double-click element
   type <sel> <text>          Type into element
   fill <sel> <text>          Clear and fill
-  press <key>                Press key (Enter, Tab, Control+a)
+  press <key> [--hold <ms>]  Press key (Enter, Tab, Control+a). --hold keeps it
+                             down <ms> then releases — precise (in-daemon), for
+                             games/charge: `press d --hold 800`
   keydown <key>              Hold a key down (no auto-release) — for games/shortcuts
   keyup <key>                Release a held key. Pair with keydown to hold-to-move:
                              `keydown d` … `keyup d`

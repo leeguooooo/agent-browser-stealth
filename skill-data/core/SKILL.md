@@ -309,12 +309,26 @@ detects this and prints a one-line hint. Drive them the screenshot way:
 chrome-use screenshot /tmp/s.png       # SEE the state (your only read path —
                                           # eval/get text return nothing useful)
 chrome-use click 640 360               # interact by viewport coordinate
-chrome-use keydown d; sleep 0.6; chrome-use keyup d   # hold-to-move
+chrome-use press d --hold 800          # hold-to-move, precise (timed in-daemon —
+                                          # NOT keydown+shell-sleep+keyup, which
+                                          # adds ~250ms jitter per round-trip)
 chrome-use press Space                 # discrete actions (jump/attack/confirm)
 ```
 
-Each command is a ~250ms round-trip, so this is fine for turn-based / canvas
-*apps* but too slow to play a real-time 60fps action game frame-by-frame.
+**Don't drive frame-by-frame with one CLI call per action** — that's the slowest,
+lowest-fidelity way (each call is a process spawn + round-trip). Script a *timed
+sequence in a single round-trip* with `batch` (it sends each step to the running
+daemon; `press --hold` and `wait` block in-daemon, so timing is precise):
+
+```bash
+chrome-use batch "press d --hold 900" "press j" "press j" "wait 200" "press d --hold 500"
+```
+
+Also try reading real state instead of pixels: `eval` runs in the page's main
+world, so for a framework/engine game you can often reach its globals (e.g. a
+Phaser/PIXI/Three instance, a store, `window.__GAME__`) and read positions/score
+directly — far better than guessing from a screenshot. Still, a real-time 60fps
+action game is not playable frame-perfect over a CLI; expect to script bursts.
 
 ## Waiting (read this)
 

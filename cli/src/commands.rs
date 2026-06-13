@@ -583,11 +583,27 @@ fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseErr
 
         // === Keyboard ===
         "press" | "key" => {
-            let key = rest.first().ok_or_else(|| ParseError::MissingArguments {
-                context: "press".to_string(),
-                usage: "press <key>",
+            let key = rest.iter().find(|a| !a.starts_with("--")).ok_or_else(|| {
+                ParseError::MissingArguments {
+                    context: "press".to_string(),
+                    usage: "press <key> [--hold <ms>]",
+                }
             })?;
-            Ok(json!({ "id": id, "action": "press", "key": key }))
+            let mut c = json!({ "id": id, "action": "press", "key": key });
+            // `--hold <ms>`: hold the key down for <ms> then release, timed inside
+            // the daemon (one round-trip, no shell-sleep jitter) — for games and
+            // hold-to-charge where keydown+sleep+keyup over 3 round-trips is too
+            // imprecise.
+            if let Some(i) = rest.iter().position(|a| *a == "--hold") {
+                let ms = rest.get(i + 1).and_then(|s| s.parse::<u64>().ok()).ok_or(
+                    ParseError::MissingArguments {
+                        context: "press --hold".to_string(),
+                        usage: "press <key> --hold <ms>",
+                    },
+                )?;
+                c["hold"] = json!(ms);
+            }
+            Ok(c)
         }
         "keydown" => {
             let key = rest.first().ok_or_else(|| ParseError::MissingArguments {
@@ -3579,6 +3595,22 @@ mod tests {
         let cmd = parse_command(&args("open example.com"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "navigate");
         assert_eq!(cmd["url"], "https://example.com");
+    }
+
+    #[test]
+    fn test_press_plain_and_hold() {
+        let cmd = parse_command(&args("press d"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "press");
+        assert_eq!(cmd["key"], "d");
+        assert!(cmd.get("hold").is_none());
+
+        let held = parse_command(&args("press d --hold 800"), &default_flags()).unwrap();
+        assert_eq!(held["key"], "d");
+        assert_eq!(held["hold"], 800);
+
+        // Missing/invalid duration is an error, not a silent no-hold.
+        assert!(parse_command(&args("press d --hold"), &default_flags()).is_err());
+        assert!(parse_command(&args("press d --hold abc"), &default_flags()).is_err());
     }
 
     #[test]
