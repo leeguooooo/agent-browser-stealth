@@ -327,8 +327,25 @@ chrome-use batch "press d --hold 900" "press j" "press j" "wait 200" "press d --
 Also try reading real state instead of pixels: `eval` runs in the page's main
 world, so for a framework/engine game you can often reach its globals (e.g. a
 Phaser/PIXI/Three instance, a store, `window.__GAME__`) and read positions/score
-directly — far better than guessing from a screenshot. Still, a real-time 60fps
-action game is not playable frame-perfect over a CLI; expect to script bursts.
+directly — far better than guessing from a screenshot.
+
+**For genuinely real-time driving, drop the CLI entirely and use the WebSocket.**
+`chrome-use stream enable` opens a bidirectional WS (`stream status` prints the
+`ws://127.0.0.1:<port>`). Connect once and you get a live ~60fps screencast AND
+can send input on the same socket — no per-action process spawn, no round-trip,
+works over the extension relay:
+
+```js
+// node (global WebSocket): live frames + locally-timed input
+const ws = new WebSocket("ws://127.0.0.1:PORT")
+ws.onmessage = e => { const m = JSON.parse(e.data); if (m.type==="frame") {/* base64 jpeg */} }
+const k = (eventType,key,code,vk) => ws.send(JSON.stringify({type:"input_keyboard",eventType,key,code,windowsVirtualKeyCode:vk}))
+k("keyDown"," ","Space",32); setTimeout(()=>k("keyUp"," ","Space",32), 80)   // a jump
+// also: {type:"input_mouse",eventType:"mousePressed",x,y,button:"left",clickCount:1}
+```
+
+This is the difference between watching a slideshow and playing the game. Reserve
+screenshots for one-off checks; use the WS for any sustained real-time control.
 
 ## Waiting (read this)
 

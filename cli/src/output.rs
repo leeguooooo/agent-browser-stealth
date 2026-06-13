@@ -2778,6 +2778,20 @@ Notes:
   - Streaming is always enabled. Set AGENT_BROWSER_STREAM_PORT to bind to a
     specific port instead of the default OS-assigned port.
 
+The WS is BIDIRECTIONAL — the high-throughput way to drive a live/real-time page
+(games, canvas apps) instead of one screenshot + one CLI call per action:
+  - Server -> client (JSON text frames):
+      {"type":"frame","data":"<base64 jpeg>"}   live screencast (~60fps)
+      plus status / tabs messages.
+  - Client -> server (send JSON text):
+      {"type":"input_keyboard","eventType":"keyDown|keyUp","key":" ","code":"Space",
+       "windowsVirtualKeyCode":32}
+      {"type":"input_mouse","eventType":"mousePressed|mouseReleased|mouseMoved",
+       "x":640,"y":360,"button":"left","clickCount":1}
+      {"type":"input_touch","eventType":"touchStart|touchEnd","touchPoints":[...]}
+  Connect once and run a tight local loop: read frames, send timed input — no
+  per-action process spawn, no round-trip. Works over the extension relay too.
+
 Global Options:
   --json               Output as JSON
   --session <name>     Use specific session
