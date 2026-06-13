@@ -155,23 +155,56 @@ function tabForTarget(targetId) {
   return null
 }
 
-// Best-effort recovery for a stale `cb-tab-<tabId>` session: the handle is gone
-// from our maps, but if the underlying Chrome tab still exists and is eligible,
-// re-attach to it and return its id so the in-flight command can be retried.
-// Returns null when the tab is genuinely gone (closed / restricted), in which
-// case the caller surfaces the stale-session error. (issue #20.1)
+// The STABLE Chrome tabId encoded in a `cb-tab-<tabId>` session id (#17), or
+// null for any other session shape (child/iframe sessions). The tabId is the
+// real source of truth: it survives the renderer-process swaps (cross-origin
+// OAuth/SSO navs) that tear down the page's CDP target — which is why binding to
+// it (like claude-in-chrome) rides through the hop that killed the old
+// target/sessionId binding (issue #23).
+function tabIdFromSession(sessionId) {
+  const m = /^cb-tab-(\d+)$/.exec(sessionId || '')
+  return m ? Number(m[1]) : null
+}
+
+// Ensure the debugger is attached to a `cb-tab-<tabId>` session's tab, re-attaching
+// across the transient window of a process swap (with a couple of short retries).
+// Returns the tabId on success, or null when the tab is genuinely gone
+// (closed / restricted). (issues #20.1, #23)
 async function recoverSessionTab(sessionId) {
-  const m = /^cb-tab-(\d+)$/.exec(sessionId)
-  if (!m) return null
-  const tabId = Number(m[1])
-  const tab = await chrome.tabs.get(tabId).catch(() => null)
-  if (!eligible(tab)) return null
-  try {
-    await attachTab(tabId)
-  } catch {
-    return null
+  const tabId = tabIdFromSession(sessionId)
+  if (tabId == null) return null
+  for (let i = 0; i < 3; i++) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null)
+    if (!eligible(tab)) return null
+    try {
+      await attachTab(tabId)
+      if (tabs.has(tabId)) return tabId
+    } catch {
+      // mid-swap: the tab exists but isn't attachable yet — back off and retry.
+    }
+    await new Promise((r) => setTimeout(r, 120 + i * 150))
   }
-  return tabs.has(tabId) ? tabId : null
+  return null
+}
+
+// Send a CDP command to a tab, riding a debugger detach that can happen between
+// our attach check and the command itself (a renderer-process swap mid-flight).
+// On a detached-style failure, drop the stale handle, re-attach the stable tab,
+// and retry once — so a cross-process nav never surfaces as a hard error (#23).
+async function sendCdpToTab(tabId, method, params) {
+  const dbg = { tabId }
+  try {
+    return await chrome.debugger.sendCommand(dbg, method, params)
+  } catch (e) {
+    const msg = String((e && e.message) || e)
+    if (!/detached|not attached|target.*(closed|gone)|no target|cannot access|frame.*detached/i.test(msg)) {
+      throw e
+    }
+    detachTab(tabId, false)
+    const ok = await recoverSessionTab(`cb-tab-${tabId}`)
+    if (!ok) throw e
+    return await chrome.debugger.sendCommand(dbg, method, params)
+  }
 }
 
 function anyConnectedTab() {
@@ -232,24 +265,26 @@ async function handleForwardCdpCommand(msg) {
   // Fail loudly instead so the agent sees an actionable error, not bad data.
   let tabId
   if (sessionId) {
-    tabId = tabForSession(sessionId)
-    if (!tabId) {
-      // The session's debugger handle is gone, but `cb-tab-<tabId>` encodes the
-      // STABLE Chrome tabId (#17). A cross-process navigation (e.g. an SSO
-      // redirect to another origin), a service-worker restart, or DevTools
-      // briefly stealing the debugger all tear the handle down while the tab
-      // itself lives on. Before failing, try to transparently re-attach to that
-      // same tab and retry — so `open`/`navigate`/`eval` self-heal instead of
-      // dead-ending the agent (issue #20.1). attachTab re-mints the identical
-      // `cb-tab-<tabId>` session, so the daemon's binding stays valid.
-      tabId = await recoverSessionTab(sessionId)
-      if (!tabId) {
+    // The stable Chrome tabId encoded in `cb-tab-<tabId>` is the source of truth
+    // (it survives renderer-process swaps; the CDP target/sessionId does not).
+    // Resolve via it primarily — don't depend on a session→tab map entry that the
+    // detach handler may have cleared — and ensure the debugger is attached,
+    // re-attaching across a cross-process nav before failing (issues #20.1, #23).
+    // `tabForSession` still covers child/iframe sessions that aren't `cb-tab-*`.
+    tabId = tabIdFromSession(sessionId) ?? tabForSession(sessionId)
+    if (tabId == null) {
+      throw new Error(`unknown sessionId ${sessionId} for ${method}`)
+    }
+    if (!tabs.has(tabId)) {
+      const recovered = await recoverSessionTab(sessionId)
+      if (!recovered) {
         throw new Error(
           `stale sessionId ${sessionId} for ${method}: its tab is gone (closed, ` +
             `navigated across processes, or lost after an extension restart). ` +
             `Re-attach by re-opening your target URL before retrying.`,
         )
       }
+      tabId = recovered
     }
   } else if (typeof params?.targetId === 'string') {
     tabId = tabForTarget(params.targetId)
@@ -259,18 +294,17 @@ async function handleForwardCdpCommand(msg) {
     // applies to any attached tab.
     tabId = anyConnectedTab()
   }
-  if (!tabId) throw new Error(`no attached tab for ${method}`)
-  const dbg = { tabId }
+  if (tabId == null) throw new Error(`no attached tab for ${method}`)
 
   // Re-enabling Runtime can leave a stale state; bounce it (matches upstream).
   if (method === 'Runtime.enable') {
     try {
-      await chrome.debugger.sendCommand(dbg, 'Runtime.disable')
+      await sendCdpToTab(tabId, 'Runtime.disable', undefined)
       await new Promise((r) => setTimeout(r, 30))
     } catch {}
-    return await chrome.debugger.sendCommand(dbg, 'Runtime.enable', params)
+    return await sendCdpToTab(tabId, 'Runtime.enable', params)
   }
-  return await chrome.debugger.sendCommand(dbg, method, params)
+  return await sendCdpToTab(tabId, method, params)
 }
 
 // ---- attach / detach ------------------------------------------------------
